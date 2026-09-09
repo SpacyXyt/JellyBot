@@ -3,7 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=24.17.0" },
+  "engines": {
+    "node": ">=24.17.0"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
@@ -15,13 +17,16 @@
     "discord.js": "^14.22.1",
     "dotenv": "^17.2.2",
     "express": "^5.1.0",
+    "jose": "^6.2.12",
     "pg": "^8.16.3",
     "stripe": "^18.5.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.3",
+    "@types/http-proxy": "^1.17.17",
     "@types/node": "^24.3.1",
     "@types/pg": "^8.15.5",
+    "http-proxy": "^1.18.1",
     "tsx": "^4.19.4",
     "typescript": "^5.9.2"
   }
