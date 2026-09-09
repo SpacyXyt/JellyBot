@@ -34,8 +34,7 @@ export const client =
     intents: [
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildMessages,
-      GatewayIntentBits.GuildMembers,
-      GatewayIntentBits.GuildInvites
+      GatewayIntentBits.GuildMembers
     ]
   });
 
