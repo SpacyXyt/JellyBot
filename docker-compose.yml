@@ -64,28 +64,5 @@ services:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
 
-  caddy:
-    image: caddy:2-alpine
-    container_name: subscription-caddy
-    network_mode: "service:wireguard"
-    depends_on:
-      - wireguard
-      - bot
-    environment:
-      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN}
-    command:
-      - caddy
-      - reverse-proxy
-      - --from
-      - ${PUBLIC_DOMAIN}
-      - --to
-      - 127.0.0.1:3000
-    volumes:
-      - caddy_data:/data
-      - caddy_config:/config
-    restart: unless-stopped
-
 volumes:
   postgres_data:
-  caddy_data:
-  caddy_config:
