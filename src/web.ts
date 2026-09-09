@@ -289,9 +289,14 @@ export function startWeb() {
       console.log(`[Proxy] Path: ${req.path}`);
 
       await requireJellyfinAccess(req, res, () => {
+        const originalUrl = req.url;
+        req.url = req.url.replace(/^\/jellyfin/, '');
+
         jellyfinProxy.web(req, res, {
           target: config.jellyfinProxyTarget
         });
+
+        req.url = originalUrl; // Optionnel : remet l'original
       });
     }
   );
