@@ -1,6 +1,6 @@
 import { config } from "./config.js";
 import { initDb } from "./db.js";
-import { client, handleInteraction, registerCommands } from "./discord.js";
+import { client, handleInteraction, initializeDiscord, registerCommands } from "./discord.js";
 import { createCheckout } from "./stripe.js";
 import { startWeb } from "./web.js";
 
@@ -24,6 +24,7 @@ async function main() {
   });
 
   await client.login(config.discordToken);
+  initializeDiscord();
   startWeb();
 
   console.log("Bot connected.");
