@@ -1,0 +1,84 @@
+services:
+  wireguard:
+    image: lscr.io/linuxserver/wireguard:latest
+    container_name: subscription-wireguard
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: Europe/Paris
+    volumes:
+      - ./wireguard:/config
+      - /lib/modules:/lib/modules:ro
+    ports:
+      - "51820:51820/udp"
+      - "80:80/tcp"
+      - "443:443/tcp"
+    sysctls:
+      net.ipv4.conf.all.src_valid_mark: "1"
+    restart: unless-stopped
+
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: subscription-bot
+    network_mode: "service:wireguard"
+    depends_on:
+      - wireguard
+      - postgres
+    environment:
+      NODE_ENV: production
+      DISCORD_TOKEN: ${DISCORD_TOKEN}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID}
+      DISCORD_GUILD_ID: ${DISCORD_GUILD_ID}
+      DISCORD_SUBSCRIBER_ROLE_ID: ${DISCORD_SUBSCRIBER_ROLE_ID}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
+      STRIPE_PRICE_ID: ${STRIPE_PRICE_ID}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
+      WEB_PORT: "3000"
+      DATABASE_URL: postgresql://bot:${POSTGRES_PASSWORD}@127.0.0.1:5432/subscriptions
+      JELLYFIN_URL: ${JELLYFIN_URL}
+      JELLYFIN_API_KEY: ${JELLYFIN_API_KEY}
+      JELLYFIN_LIBRARY_ID: ${JELLYFIN_LIBRARY_ID:-}
+      JELLYFIN_USER_PREFIX: ${JELLYFIN_USER_PREFIX:-Discord}
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: subscription-postgres
+    network_mode: "service:wireguard"
+    depends_on:
+      - wireguard
+    environment:
+      POSTGRES_DB: subscriptions
+      POSTGRES_USER: bot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    command:
+      - postgres
+      - -c
+      - listen_addresses=127.0.0.1
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: subscription-caddy
+    network_mode: "service:wireguard"
+    depends_on:
+      - wireguard
+      - bot
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:
