@@ -15,7 +15,7 @@ services:
       PASSWORD_HASH: ${PASSWORD_HASH}
 
     volumes:
-      - ./wireguard:/config
+      - ./wireguard:/etc/wireguard
       - /lib/modules:/lib/modules:ro
 
     ports:
