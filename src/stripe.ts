@@ -33,7 +33,7 @@ export async function handleStripeEvent(event: Stripe.Event) {
 
     const currentPeriodEnd =
       "current_period_end" in subscription && subscription.current_period_end
-        ? new Date(subscription.current_period_end * 1000)
+        ? new Date(Number(subscription.current_period_end) * 1000)
         : null;
 
     await upsertSubscription({
