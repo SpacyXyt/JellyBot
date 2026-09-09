@@ -17,6 +17,8 @@ services:
     ports:
       - "${PORT_WIREGUARD}:51820/udp"
       - "${WEBPORT_WIREGUARD}:51821/tcp"
+      # 👇 ADD YOUR BOT'S PORT HERE
+      - "${PORT_BOT}:${BOT_WEBPORT}/tcp"
     sysctls:
       net.ipv4.conf.all.src_valid_mark: "1"
     restart: unless-stopped
@@ -29,8 +31,8 @@ services:
     depends_on:
       - wireguard
       - postgres
-    ports:
-      - "${PORT_BOT}:${BOT_WEBPORT}/tcp"
+    # 👇 CHANGE: Use the VPN's network
+    network_mode: "service:wireguard"
     environment:
       NODE_ENV: production
       DISCORD_TOKEN: ${DISCORD_TOKEN}
@@ -42,6 +44,7 @@ services:
       STRIPE_PRICE_ID: ${STRIPE_PRICE_ID}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
       WEB_PORT: ${BOT_WEBPORT}
+      # 👇 CHANGE: Use the VPN's internal IP for database
       DATABASE_URL: postgresql://bot:${POSTGRES_PASSWORD}@127.0.0.1:5432/subscriptions
       JELLYFIN_URL: ${JELLYFIN_URL}
       JELLYFIN_API_KEY: ${JELLYFIN_API_KEY}
@@ -52,6 +55,7 @@ services:
   postgres:
     image: postgres:17-alpine
     container_name: subscription-postgres
+    # 👇 KEEP THIS: Postgres is already on the VPN's network
     network_mode: "service:wireguard"
     depends_on:
       - wireguard
