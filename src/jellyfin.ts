@@ -4,7 +4,7 @@ async function jf<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`${config.jellyfinUrl}${path}`, {
     ...init,
     headers: {
-      "X-Emby-Token": config.jellyfinApiKey,
+      "Authorization": `MediaBrowser Token="${config.jellyfinApiKey}"`,
       "Content-Type": "application/json",
       ...(init.headers || {})
     }
