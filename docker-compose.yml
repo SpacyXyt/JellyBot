@@ -30,6 +30,8 @@ services:
     depends_on:
       - wireguard
       - postgres
+    ports:
+      - "${PORT_BOT}:${BOT_WEBPORT}/tcp"
     environment:
       NODE_ENV: production
       DISCORD_TOKEN: ${DISCORD_TOKEN}
