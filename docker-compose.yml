@@ -1,72 +1,104 @@
 services:
   wireguard:
-    image: ghcr.io/wg-easy/wg-easy
+    image: ghcr.io/wg-easy/wg-easy:latest
     container_name: subscription-wireguard
+
     cap_add:
       - NET_ADMIN
       - SYS_MODULE
+
     environment:
       PUID: "1000"
       PGID: "1000"
       TZ: Europe/Paris
       WG_HOST: ${WG_HOST}
       PASSWORD_HASH: ${PASSWORD_HASH}
+
     volumes:
       - ./wireguard:/config
       - /lib/modules:/lib/modules:ro
+
     ports:
       - "${PORT_WIREGUARD}:51820/udp"
       - "${WEBPORT_WIREGUARD}:51821/tcp"
       - "${PORT_BOT}:${BOT_WEBPORT}/tcp"
+
     sysctls:
       net.ipv4.conf.all.src_valid_mark: "1"
+
     restart: unless-stopped
 
   bot:
     build:
       context: .
       dockerfile: Dockerfile
+
     container_name: subscription-bot
+
     depends_on:
       - wireguard
       - postgres
+
     network_mode: "service:wireguard"
+
     environment:
       NODE_ENV: production
+
       DISCORD_TOKEN: ${DISCORD_TOKEN}
       DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID}
       DISCORD_GUILD_ID: ${DISCORD_GUILD_ID}
       DISCORD_SUBSCRIBER_ROLE_ID: ${DISCORD_SUBSCRIBER_ROLE_ID}
+
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
       STRIPE_PRICE_ID: ${STRIPE_PRICE_ID}
+
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
       WEB_PORT: ${BOT_WEBPORT}
+
       DATABASE_URL: postgresql://bot:${POSTGRES_PASSWORD}@127.0.0.1:5432/subscriptions
+
       JELLYFIN_URL: ${JELLYFIN_URL}
       JELLYFIN_API_KEY: ${JELLYFIN_API_KEY}
       JELLYFIN_LIBRARY_ID: ${JELLYFIN_LIBRARY_ID}
       JELLYFIN_USER_PREFIX: ${JELLYFIN_USER_PREFIX}
+
       DISCORD_SUBSCRIBE_CHANNEL_ID: ${DISCORD_SUBSCRIBE_CHANNEL_ID}
       SUBSCRIBE_BANNER_PATH: ${SUBSCRIBE_BANNER_PATH}
+
+      DISCORD_OAUTH_CLIENT_ID: ${DISCORD_OAUTH_CLIENT_ID}
+      DISCORD_OAUTH_CLIENT_SECRET: ${DISCORD_OAUTH_CLIENT_SECRET}
+      DISCORD_OAUTH_REDIRECT_URI: ${DISCORD_OAUTH_REDIRECT_URI}
+
+      SESSION_SECRET: ${SESSION_SECRET}
+
+      JELLYFIN_PROXY_PATH: ${JELLYFIN_PROXY_PATH}
+      JELLYFIN_PROXY_TARGET: ${JELLYFIN_PROXY_TARGET}
+
     restart: unless-stopped
 
   postgres:
     image: postgres:17-alpine
     container_name: subscription-postgres
+
     network_mode: "service:wireguard"
+
     depends_on:
       - wireguard
+
     environment:
       POSTGRES_DB: subscriptions
       POSTGRES_USER: bot
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
     command:
       - postgres
       - -c
       - listen_addresses=127.0.0.1
+
     volumes:
       - postgres_data:/var/lib/postgresql/data
+
     restart: unless-stopped
 
 volumes:
