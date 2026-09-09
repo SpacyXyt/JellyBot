@@ -2,6 +2,7 @@ import express from "express";
 import httpProxy from "http-proxy";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { IncomingMessage, ServerResponse, OutgoingHttpHeaders, OutgoingHttpHeader } from 'node:http';
 
 import { config } from "./config.js";
 
@@ -292,11 +293,59 @@ export function startWeb() {
         const originalUrl = req.url;
         req.url = req.url.replace(/^\/jellyfin/, '');
 
+        // Réécriture des redirections - Version typée correctement
+        const originalWriteHead = res.writeHead.bind(res);
+        
+        res.writeHead = function(
+          statusCode: number,
+          statusMessage?: string | OutgoingHttpHeaders | OutgoingHttpHeader[],
+          headers?: OutgoingHttpHeaders | OutgoingHttpHeader[]
+        ): any {
+          // Gère les différents cas d'appel de writeHead
+          let actualHeaders: OutgoingHttpHeaders | OutgoingHttpHeader[] | undefined;
+          let actualStatusMessage: string | undefined;
+          
+          if (typeof statusMessage === 'string') {
+            // writeHead(statusCode, statusMessage, headers)
+            actualStatusMessage = statusMessage;
+            actualHeaders = headers;
+          } else {
+            // writeHead(statusCode, headers)
+            actualHeaders = statusMessage as OutgoingHttpHeaders | OutgoingHttpHeader[] | undefined;
+          }
+
+          // Si c'est une redirection (3xx) et qu'on a des headers
+          if (statusCode >= 300 && statusCode < 400 && actualHeaders) {
+            // Convertit les headers en objet si nécessaire
+            const headersObj = Array.isArray(actualHeaders) 
+              ? Object.fromEntries(actualHeaders as any) 
+              : { ...actualHeaders };
+            
+            // Vérifie et modifie le header Location
+            if (headersObj.Location && typeof headersObj.Location === 'string') {
+              const location = headersObj.Location;
+              if (location.startsWith('/') && !location.startsWith('/jellyfin')) {
+                headersObj.Location = '/jellyfin' + location;
+              }
+            }
+            
+            // Reconstruit les headers
+            actualHeaders = headersObj;
+          }
+
+          // Appelle la méthode originale avec les bons paramètres
+          if (typeof statusMessage === 'string') {
+            return originalWriteHead(statusCode, actualStatusMessage, actualHeaders);
+          } else {
+            return originalWriteHead(statusCode, actualHeaders);
+          }
+        };
+
         jellyfinProxy.web(req, res, {
           target: config.jellyfinProxyTarget
         });
 
-        req.url = originalUrl; // Optionnel : remet l'original
+        req.url = originalUrl;
       });
     }
   );
