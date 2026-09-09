@@ -19,14 +19,14 @@
     "express": "^5.1.0",
     "jose": "^6.2.12",
     "pg": "^8.16.3",
-    "stripe": "^18.5.0"
+    "stripe": "^18.5.0",
+    "http-proxy": "^1.18.1"
   },
   "devDependencies": {
     "@types/express": "^5.0.3",
     "@types/http-proxy": "^1.17.17",
     "@types/node": "^24.3.1",
     "@types/pg": "^8.15.5",
-    "http-proxy": "^1.18.1",
     "tsx": "^4.19.4",
     "typescript": "^5.9.2"
   }
