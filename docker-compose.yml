@@ -15,6 +15,7 @@ services:
     ports:
       - "${PORT_WIREGUARD}:51820/udp"
       - "${WEBPORT_WIREGUARD}:80/tcp"
+      - "${WEBPORT_WIREGUARD_SSL}:443/tcp"
     sysctls:
       net.ipv4.conf.all.src_valid_mark: "1"
     restart: unless-stopped
@@ -64,15 +65,23 @@ services:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
 
-  caddy:
+    caddy:
     image: caddy:2-alpine
     container_name: subscription-caddy
     network_mode: "service:wireguard"
     depends_on:
       - wireguard
       - bot
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN}
+    command:
+      - caddy
+      - reverse-proxy
+      - --from
+      - ${PUBLIC_DOMAIN}
+      - --to
+      - 127.0.0.1:3000
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
     restart: unless-stopped
