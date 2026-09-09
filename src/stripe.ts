@@ -200,7 +200,7 @@ async function processReferralCommission(
 
     if (
       channel &&
-      channel.isTextBased()
+      channel.isSendable()
     ) {
       const formatMoney =
         (cents: number) =>
@@ -412,10 +412,9 @@ export async function handleStripeEvent(
      * On récupère l'abonnement.
      */
     const subscriptionId =
-      typeof invoice.subscription ===
-      "string"
-        ? invoice.subscription
-        : invoice.subscription?.id ??
+      typeof invoice.parent?.subscription_details?.subscription === "string"
+        ? invoice.parent.subscription_details.subscription
+        : invoice.parent?.subscription_details?.subscription?.id ??
           null;
 
     if (!subscriptionId) {
