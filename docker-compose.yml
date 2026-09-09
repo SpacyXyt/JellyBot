@@ -13,8 +13,8 @@ services:
       - ./wireguard:/config
       - /lib/modules:/lib/modules:ro
     ports:
-      - "51820:51820/udp"
-      - "85:80/tcp"
+      - "${PORT_WIREGUARD}:51820/udp"
+      - "${WEBPORT_WIREGUARD}:80/tcp"
     sysctls:
       net.ipv4.conf.all.src_valid_mark: "1"
     restart: unless-stopped
