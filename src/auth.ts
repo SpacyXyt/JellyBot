@@ -335,7 +335,7 @@ export async function discordCallback(
       }
 
       res.redirect(
-        `${config.publicBaseUrl}/jellyfin`
+        `${config.publicBaseUrl}/jellyfin/web`
       );
 
       return;
