@@ -9,6 +9,8 @@ services:
       PUID: "1000"
       PGID: "1000"
       TZ: Europe/Paris
+      WG_HOST: ${WG_HOST}
+      PASSWORD: ${PASSWORD}
     volumes:
       - ./wireguard:/config
       - /lib/modules:/lib/modules:ro
