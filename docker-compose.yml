@@ -14,8 +14,7 @@ services:
       - /lib/modules:/lib/modules:ro
     ports:
       - "51820:51820/udp"
-      - "80:80/tcp"
-      - "443:443/tcp"
+      - "85:80/tcp"
     sysctls:
       net.ipv4.conf.all.src_valid_mark: "1"
     restart: unless-stopped
