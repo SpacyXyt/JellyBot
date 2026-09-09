@@ -47,7 +47,7 @@ export async function findUserByName(name: string) {
   return users.find(u => u.Name === name) ?? null;
 }
 
-export async function createOrGetJellyfinUser(discordUserId: string) {
+export async function createOrGetJellyfinUser(discordUserId) {
   const name = safeName(discordUserId);
 
   const existing = await findUserByName(name);
@@ -56,10 +56,12 @@ export async function createOrGetJellyfinUser(discordUserId: string) {
     return existing;
   }
 
-  return await jf<JellyfinUser>("/Users/New", {
+  return await jf("/Users/New", {
     method: "POST",
     body: JSON.stringify({
-      Name: name
+      Name: name,
+      AuthenticationProviderId: "Jellyfin.Server.Implementations.Users.DefaultAuthenticationProvider",
+      PasswordResetProviderId: "Jellyfin.Server.Implementations.Users.DefaultPasswordResetProvider"
     })
   });
 }
