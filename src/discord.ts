@@ -12,20 +12,50 @@ import {
   type ButtonInteraction,
   type Interaction,
   type Message,
-  TextChannel
+  TextChannel,
+  type Guild,
+  type Invite
 } from "discord.js";
 
 import { config } from "./config.js";
-import { createCheckout } from "./stripe.js";
-import { getSubscription } from "./db.js";
+
+import {
+  createCheckout
+} from "./stripe.js";
+
+import {
+  getSubscription,
+  createReferral,
+  getReferralStats
+} from "./db.js";
 
 export const client =
   new Client({
     intents: [
       GatewayIntentBits.Guilds,
-      GatewayIntentBits.GuildMessages
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.GuildMembers,
+      GatewayIntentBits.GuildInvites
     ]
   });
+
+/*
+ * ============================================================
+ * INVITATIONS EN MÉMOIRE
+ * ============================================================
+ *
+ * invite code -> Discord user ID du parrain
+ */
+
+const referralInvites =
+  new Map<
+    string,
+    {
+      guildId: string;
+      referrerUserId: string;
+      uses: number;
+    }
+  >();
 
 /*
  * ============================================================
@@ -50,6 +80,12 @@ export const commands = [
     .setName("statut")
     .setDescription(
       "Voir l'état de votre abonnement"
+    ),
+
+  new SlashCommandBuilder()
+    .setName("parrainage")
+    .setDescription(
+      "Créer votre invitation et voir vos statistiques de parrainage"
     )
 ].map(command =>
   command.toJSON()
@@ -141,7 +177,8 @@ export async function syncDiscordRole(
 async function deleteAllMessages(
   channel: any
 ) {
-  let before: string | undefined;
+  let before:
+    string | undefined;
 
   while (true) {
     const messages =
@@ -152,7 +189,9 @@ async function deleteAllMessages(
           : {})
       });
 
-    if (messages.size === 0) {
+    if (
+      messages.size === 0
+    ) {
       break;
     }
 
@@ -162,10 +201,7 @@ async function deleteAllMessages(
       try {
         await message.delete();
       } catch {
-        /*
-         * Le message peut avoir déjà été supprimé
-         * ou être trop ancien.
-         */
+        // Message déjà supprimé / trop ancien.
       }
     }
 
@@ -178,7 +214,9 @@ async function deleteAllMessages(
 
     before = last.id;
 
-    if (messages.size < 100) {
+    if (
+      messages.size < 100
+    ) {
       break;
     }
   }
@@ -199,30 +237,23 @@ export async function setupSubscribeChannel() {
     );
   }
 
-  /*
-   * Nettoyage du salon.
-   */
-  await deleteAllMessages(channel);
+  await deleteAllMessages(
+    channel
+  );
 
-  /*
-   * Bannière.
-   */
   const banner =
     new AttachmentBuilder(
       config.subscribeBannerPath
     );
 
-  /*
-   * Bouton Stripe.
-   *
-   * On utilise un bouton Discord et non une URL Stripe
-   * fixe afin de pouvoir mettre le Discord user ID dans
-   * les metadata du Checkout.
-   */
   const subscribeButton =
     new ButtonBuilder()
-      .setCustomId("subscribe")
-      .setLabel("S'abonner")
+      .setCustomId(
+        "subscribe"
+      )
+      .setLabel(
+        "S'abonner"
+      )
       .setStyle(
         ButtonStyle.Primary
       );
@@ -240,6 +271,403 @@ export async function setupSubscribeChannel() {
 
   console.log(
     "Subscription channel initialized."
+  );
+}
+
+/*
+ * ============================================================
+ * REFERRAL CHANNEL
+ * ============================================================
+ */
+
+async function sendReferralMessage(
+  content: string
+) {
+  try {
+    const channel =
+      client.channels.cache.get(
+        config.discordReferralChannelId
+      ) as TextChannel;
+
+    if (
+      !channel ||
+      !channel.isTextBased()
+    ) {
+      console.error(
+        "DISCORD_REFERRAL_CHANNEL_ID ne correspond pas à un salon texte."
+      );
+
+      return;
+    }
+
+    await channel.send({
+      content
+    });
+  } catch (error) {
+    console.error(
+      "Referral channel error:",
+      error
+    );
+  }
+}
+
+/*
+ * ============================================================
+ * INITIALISATION DES INVITATIONS
+ * ============================================================
+ */
+
+async function cacheGuildInvites(
+  guild: Guild
+) {
+  try {
+    const invites =
+      await guild.invites.fetch();
+
+    for (
+      const invite of invites.values()
+    ) {
+      const existing =
+        referralInvites.get(
+          invite.code
+        );
+
+      if (existing) {
+        existing.uses =
+          invite.uses ?? 0;
+
+        continue;
+      }
+
+      /*
+       * Les invitations déjà présentes avant le lancement
+       * du système ne sont pas considérées comme des invitations
+       * de parrainage.
+       */
+      referralInvites.set(
+        invite.code,
+        {
+          guildId: guild.id,
+          referrerUserId:
+            invite.inviter?.id ?? "",
+          uses:
+            invite.uses ?? 0
+        }
+      );
+    }
+
+    console.log(
+      `Invitations synchronisées pour ${guild.name}.`
+    );
+  } catch (error) {
+    console.error(
+      `Impossible de récupérer les invitations de ${guild.name}:`,
+      error
+    );
+  }
+}
+
+/*
+ * ============================================================
+ * DÉTECTION DU PARRAIN
+ * ============================================================
+ */
+
+async function detectUsedReferralInvite(
+  guild: Guild
+) {
+  try {
+    const invites =
+      await guild.invites.fetch();
+
+    for (
+      const invite of invites.values()
+    ) {
+      const cached =
+        referralInvites.get(
+          invite.code
+        );
+
+      /*
+       * Invitation créée par notre commande /parrainage.
+       */
+      if (
+        !cached ||
+        !cached.referrerUserId
+      ) {
+        continue;
+      }
+
+      const previousUses =
+        cached.uses;
+
+      const currentUses =
+        invite.uses ?? 0;
+
+      if (
+        currentUses >
+        previousUses
+      ) {
+        cached.uses =
+          currentUses;
+
+        return {
+          invite,
+          referrerUserId:
+            cached.referrerUserId
+        };
+      }
+
+      cached.uses =
+        currentUses;
+    }
+  } catch (error) {
+    console.error(
+      "Referral invite detection error:",
+      error
+    );
+  }
+
+  return null;
+}
+
+/*
+ * ============================================================
+ * GUILD MEMBER ADD
+ * ============================================================
+ */
+
+async function handleGuildMemberAdd(
+  member: import("discord.js").GuildMember
+) {
+  if (
+    member.guild.id !==
+    config.discordGuildId
+  ) {
+    return;
+  }
+
+  const result =
+    await detectUsedReferralInvite(
+      member.guild
+    );
+
+  if (!result) {
+    console.log(
+      `Aucun parrain détecté pour ${member.user.tag}.`
+    );
+
+    return;
+  }
+
+  const {
+    invite,
+    referrerUserId
+  } = result;
+
+  /*
+   * Protection contre l'auto-parrainage.
+   */
+  if (
+    referrerUserId ===
+    member.id
+  ) {
+    return;
+  }
+
+  const created =
+    await createReferral(
+      member.id,
+      referrerUserId,
+      invite.code
+    );
+
+  if (!created) {
+    return;
+  }
+
+  console.log(
+    `Parrainage enregistré : ${referrerUserId} -> ${member.id}`
+  );
+
+  await sendReferralMessage(
+    [
+      "🎉 **Nouveau parrainage**",
+      "",
+      `👤 Parrain : <@${referrerUserId}>`,
+      `🆕 Nouveau membre : <@${member.id}>`,
+      `🔗 Invitation : \`${invite.code}\``,
+      "",
+      "💰 La commission de 15 % sera créditée lorsqu'un paiement Stripe sera confirmé."
+    ].join("\n")
+  );
+}
+
+/*
+ * ============================================================
+ * /PARRAINAGE
+ * ============================================================
+ */
+
+async function handleReferralCommand(
+  interaction: ChatInputCommandInteraction
+) {
+  /*
+   * Le membre doit avoir le rôle Subscribed.
+   */
+
+  if (
+    !interaction.inGuild()
+  ) {
+    await interaction.reply({
+      content:
+        "Cette commande doit être utilisée dans le serveur Discord.",
+      ephemeral: true
+    });
+
+    return;
+  }
+
+  const member =
+    interaction.member as import("discord.js").GuildMember;
+
+  const hasSubscriberRole =
+    member.roles.cache.has(
+      config.subscriberRoleId
+    );
+
+  if (
+    !hasSubscriberRole
+  ) {
+    await interaction.reply({
+      content: [
+        "❌ Vous ne pouvez pas créer d'invitation de parrainage.",
+        "",
+        `Vous devez posséder le rôle <@&${config.subscriberRoleId}>.`
+      ].join("\n"),
+      ephemeral: true
+    });
+
+    return;
+  }
+
+  try {
+    /*
+     * On utilise le salon de parrainage comme salon cible
+     * si possible.
+     */
+    const referralChannel =
+      client.channels.cache.get(
+        config.discordReferralChannelId
+      ) as TextChannel;
+
+    if (
+      !referralChannel ||
+      !referralChannel.isTextBased()
+    ) {
+      await interaction.reply({
+        content:
+          "Le salon de parrainage n'est pas correctement configuré.",
+        ephemeral: true
+      });
+
+      return;
+    }
+
+    /*
+     * Invitation sans expiration et sans limite d'utilisation.
+     *
+     * C'est le bot qui crée techniquement l'invitation,
+     * mais elle est enregistrée comme appartenant au membre
+     * qui a exécuté /parrainage.
+     */
+    const invite =
+      await referralChannel.createInvite({
+        maxAge: 0,
+        maxUses: 0,
+        unique: true,
+        reason:
+          `Invitation de parrainage créée pour ${interaction.user.tag} (${interaction.user.id})`
+      });
+
+    /*
+     * Enregistrement local.
+     */
+    referralInvites.set(
+      invite.code,
+      {
+        guildId:
+          interaction.guildId,
+        referrerUserId:
+          interaction.user.id,
+        uses:
+          invite.uses ?? 0
+      }
+    );
+
+    /*
+     * Statistiques actuelles.
+     */
+    const stats =
+      await getReferralStats(
+        interaction.user.id
+      );
+
+    const inviteUrl =
+      `https://discord.gg/${invite.code}`;
+
+    await interaction.reply({
+      content: [
+        "🎁 **Votre invitation de parrainage**",
+        "",
+        `🔗 ${inviteUrl}`,
+        "",
+        "Partagez cette invitation pour inviter quelqu'un sur le serveur.",
+        "",
+        "📊 **Vos statistiques**",
+        `👥 Filleuls : **${stats.referredCount}**`,
+        `💰 Revenus générés : **${formatMoney(stats.revenueCents)}**`,
+        `💎 Commissions : **${formatMoney(stats.commissionCents)}**`,
+        "",
+        "Vous recevez **15 %** des paiements Stripe générés par vos filleuls."
+      ].join("\n"),
+      ephemeral: true
+    });
+  } catch (error) {
+    console.error(
+      "Referral invite creation error:",
+      error
+    );
+
+    await interaction.reply({
+      content: [
+        "❌ Impossible de créer votre invitation.",
+        "",
+        "Vérifiez que le bot possède la permission **Créer une invitation** dans le salon de parrainage."
+      ].join("\n"),
+      ephemeral: true
+    });
+  }
+}
+
+/*
+ * ============================================================
+ * FORMAT MONEY
+ * ============================================================
+ */
+
+function formatMoney(
+  cents: number,
+  currency = "EUR"
+) {
+  return new Intl.NumberFormat(
+    "fr-FR",
+    {
+      style: "currency",
+      currency
+    }
+  ).format(
+    cents / 100
   );
 }
 
@@ -277,7 +705,7 @@ async function handleMessageCreate(
 
 /*
  * ============================================================
- * /abonnement
+ * /ABONNEMENT
  * ============================================================
  */
 
@@ -298,7 +726,7 @@ async function handleSubscriptionCommand(
 
 /*
  * ============================================================
- * /statut
+ * /STATUT
  * ============================================================
  */
 
@@ -342,7 +770,7 @@ async function handleStatusCommand(
 
 /*
  * ============================================================
- * /compte
+ * /COMPTE
  * ============================================================
  */
 
@@ -508,6 +936,12 @@ export async function handleInteraction(
           interaction
         );
         break;
+
+      case "parrainage":
+        await handleReferralCommand(
+          interaction
+        );
+        break;
     }
   } catch (error) {
     console.error(
@@ -551,6 +985,11 @@ export async function initializeDiscord() {
     handleMessageCreate
   );
 
+  client.on(
+    "guildMemberAdd",
+    handleGuildMemberAdd
+  );
+
   await client.login(
     config.discordToken
   );
@@ -571,6 +1010,19 @@ export async function initializeDiscord() {
 
   console.log(
     `Discord connected as ${client.user?.tag}`
+  );
+
+  /*
+   * Synchronisation des invitations
+   * au démarrage.
+   */
+  const guild =
+    await client.guilds.fetch(
+      config.discordGuildId
+    );
+
+  await cacheGuildInvites(
+    guild
   );
 
   await registerCommands();

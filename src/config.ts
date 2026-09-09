@@ -25,6 +25,9 @@ export const config = {
   subscriberRoleId:
     required("DISCORD_SUBSCRIBER_ROLE_ID"),
 
+  discordReferralChannelId:
+    required("DISCORD_REFERRAL_CHANNEL_ID"),
+
   discordSubscribeChannelId:
     required(
       "DISCORD_SUBSCRIBE_CHANNEL_ID"
