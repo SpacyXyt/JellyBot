@@ -1,16 +1,23 @@
 import { config } from "./config.js";
 
-// Add these type definitions
 type JellyfinUser = {
   Id: string;
   Name: string;
   Policy?: {
+    IsAdministrator?: boolean;
+    IsHidden?: boolean;
     IsDisabled?: boolean;
-    // ... other policy fields
+    EnableAllFolders?: boolean;
+    EnableRemoteAccess?: boolean;
+    EnableContentDownloading?: boolean;
+    EnableContentDeletion?: boolean;
+    EnableMediaPlayback?: boolean;
+    EnableAudioPlaybackTranscoding?: boolean;
+    EnableVideoPlaybackTranscoding?: boolean;
+    // Add other policy fields as needed
+    [key: string]: any;
   };
 };
-
-type JellyfinApiResponse<T> = T;
 
 async function jf<T = any>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`${config.jellyfinUrl}${path}`, {
@@ -63,18 +70,30 @@ export async function createOrGetJellyfinUser(discordUserId: string) {
 }
 
 export async function setUserActive(userId: string, active: boolean) {
+  // Get the current user first
+  const user = await jf<JellyfinUser>(`/Users/${encodeURIComponent(userId)}`);
+  
+  if (!user) {
+    throw new Error(`User ${userId} not found`);
+  }
+
+  // Build the complete policy by merging with existing
+  const policy = {
+    ...user.Policy,
+    IsDisabled: !active,
+    EnableAllFolders: !config.jellyfinLibraryId,
+    EnableRemoteAccess: false,
+    EnableContentDownloading: false,
+    EnableContentDeletion: false,
+    EnableMediaPlayback: active,
+    EnableAudioPlaybackTranscoding: active,
+    EnableVideoPlaybackTranscoding: active
+  };
+
+  // Update the policy
   await jf<void>(`/Users/${encodeURIComponent(userId)}/Policy`, {
     method: "POST",
-    body: JSON.stringify({
-      IsDisabled: !active,
-      EnableAllFolders: !config.jellyfinLibraryId,
-      EnableRemoteAccess: false,
-      EnableContentDownloading: false,
-      EnableContentDeletion: false,
-      EnableMediaPlayback: active,
-      EnableAudioPlaybackTranscoding: active,
-      EnableVideoPlaybackTranscoding: active
-    })
+    body: JSON.stringify(policy)
   });
 }
 
