@@ -1,6 +1,6 @@
 services:
   wireguard:
-    image: lscr.io/linuxserver/wireguard:latest
+    image: weejewel/wg-easy
     container_name: subscription-wireguard
     cap_add:
       - NET_ADMIN
