@@ -10,7 +10,7 @@ services:
       PGID: "1000"
       TZ: Europe/Paris
       WG_HOST: ${WG_HOST}
-      PASSWORD: ${PASSWORD}
+      PASSWORD_HASH: ${PASSWORD_HASH}
     volumes:
       - ./wireguard:/config
       - /lib/modules:/lib/modules:ro
