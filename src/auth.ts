@@ -258,32 +258,35 @@ export async function discordCallback(
       OAUTH_STATE_COOKIE
     );
 
-    clearCookie(res, OAUTH_STATE_COOKIE);
-
     if (
-      !storedState ||
-      storedState.length !== state.length ||
-      !crypto.timingSafeEqual(
-        Buffer.from(storedState),
-        Buffer.from(state)
-      )
-    ) {
-      res.status(400).send(`
-        <!DOCTYPE html>
-        <html lang="fr">
-          <head>
-            <meta charset="UTF-8">
-            <title>Authentification</title>
-          </head>
-          <body>
-            <h1>Authentification refusée</h1>
-            <p>La vérification de sécurité a échoué.</p>
-          </body>
-        </html>
-      `);
+        !storedState ||
+        storedState.length !== state.length ||
+        !crypto.timingSafeEqual(
+            Buffer.from(storedState),
+            Buffer.from(state)
+        )
+        ) {
+        console.log("[OAuth] State verification failed");
+        console.log("[OAuth] Stored:", storedState);
+        console.log("[OAuth] Received:", state);
 
-      return;
+        res.status(400).send(`
+            <!DOCTYPE html>
+            <html lang="fr">
+            <head>
+                <meta charset="UTF-8">
+                <title>Authentification</title>
+            </head>
+            <body>
+                <h1>Authentification refusée</h1>
+                <p>La vérification de sécurité a échoué.</p>
+            </body>
+            </html>
+        `);
+        return;
     }
+
+    clearCookie(res, OAUTH_STATE_COOKIE);
 
     const discordUser =
       await getDiscordUserFromOAuth(code);
