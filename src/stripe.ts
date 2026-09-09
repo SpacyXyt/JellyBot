@@ -129,7 +129,7 @@ export async function handleStripeEvent(
 
 
     console.log(
-      `Compte Jellyfin prêt : ${jellyfinUser.Name}`
+      `Compte Jellyfin prêt : ${jellyfinUser.user.Name}`
     );
 
 
@@ -150,7 +150,7 @@ export async function handleStripeEvent(
         "active",
 
       jellyfinUserId:
-        jellyfinUser.Id
+        jellyfinUser.user.Id
     });
 
 
@@ -268,7 +268,7 @@ export async function handleStripeEvent(
         currentPeriodEnd,
 
         jellyfinUserId:
-          jellyfinUser.Id
+          jellyfinUser.user.Id
       });
 
 

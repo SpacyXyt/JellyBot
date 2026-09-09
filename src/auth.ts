@@ -1,20 +1,43 @@
-import type { NextFunction, Request, Response } from "express";
+import type {
+  NextFunction,
+  Request,
+  Response
+} from "express";
+
 import crypto from "node:crypto";
-import { SignJWT, jwtVerify } from "jose";
+
+import {
+  SignJWT,
+  jwtVerify
+} from "jose";
 
 import { config } from "./config.js";
-import { getSubscription, setJellyfinUserId } from "./db.js";
+
+import {
+  getSubscription,
+  setJellyfinUserId
+} from "./db.js";
+
 import {
   ensureSubscriptionUser
 } from "./jellyfin.js";
 
-const SESSION_COOKIE = "jelly_session";
-const OAUTH_STATE_COOKIE = "discord_oauth_state";
+const SESSION_COOKIE =
+  "jelly_session";
 
-const SESSION_MAX_AGE = 60 * 60 * 24 * 7; // 7 jours
-const OAUTH_STATE_MAX_AGE = 60 * 10; // 10 minutes
+const OAUTH_STATE_COOKIE =
+  "discord_oauth_state";
 
-const sessionSecret = new TextEncoder().encode(config.sessionSecret);
+const SESSION_MAX_AGE =
+  60 * 60 * 24 * 7;
+
+const OAUTH_STATE_MAX_AGE =
+  60 * 10;
+
+const sessionSecret =
+  new TextEncoder().encode(
+    config.sessionSecret
+  );
 
 type SessionPayload = {
   discordUserId: string;
@@ -34,29 +57,40 @@ type DiscordUser = {
   global_name?: string | null;
 };
 
-function getCookie(req: Request, name: string): string | null {
-  const header = req.headers.cookie;
+function getCookie(
+  req: Request,
+  name: string
+): string | null {
+  const header =
+    req.headers.cookie;
 
   if (!header) {
     return null;
   }
 
-  const cookies = header.split(";");
+  const cookies =
+    header.split(";");
 
   for (const cookie of cookies) {
-    const separator = cookie.indexOf("=");
+    const separator =
+      cookie.indexOf("=");
 
     if (separator === -1) {
       continue;
     }
 
-    const key = cookie.slice(0, separator).trim();
+    const key =
+      cookie
+        .slice(0, separator)
+        .trim();
 
     if (key !== name) {
       continue;
     }
 
-    return decodeURIComponent(cookie.slice(separator + 1));
+    return decodeURIComponent(
+      cookie.slice(separator + 1)
+    );
   }
 
   return null;
@@ -81,7 +115,10 @@ function setCookie(
   );
 }
 
-function clearCookie(res: Response, name: string) {
+function clearCookie(
+  res: Response,
+  name: string
+) {
   res.append(
     "Set-Cookie",
     [
@@ -96,10 +133,14 @@ function clearCookie(res: Response, name: string) {
 }
 
 function generateOAuthState(): string {
-  return crypto.randomBytes(32).toString("hex");
+  return crypto
+    .randomBytes(32)
+    .toString("hex");
 }
 
-async function createSessionToken(discordUserId: string) {
+async function createSessionToken(
+  discordUserId: string
+): Promise<string> {
   return await new SignJWT({
     discordUserId
   } satisfies SessionPayload)
@@ -107,7 +148,9 @@ async function createSessionToken(discordUserId: string) {
       alg: "HS256"
     })
     .setIssuedAt()
-    .setExpirationTime(`${SESSION_MAX_AGE}s`)
+    .setExpirationTime(
+      `${SESSION_MAX_AGE}s`
+    )
     .sign(sessionSecret);
 }
 
@@ -115,17 +158,23 @@ export async function verifySessionToken(
   token: string
 ): Promise<SessionPayload | null> {
   try {
-    const { payload } = await jwtVerify(token, sessionSecret);
+    const { payload } =
+      await jwtVerify(
+        token,
+        sessionSecret
+      );
 
     if (
-      typeof payload.discordUserId !== "string" ||
+      typeof payload.discordUserId !==
+        "string" ||
       payload.discordUserId.length === 0
     ) {
       return null;
     }
 
     return {
-      discordUserId: payload.discordUserId
+      discordUserId:
+        payload.discordUserId
     };
   } catch {
     return null;
@@ -135,70 +184,96 @@ export async function verifySessionToken(
 export async function getSessionFromRequest(
   req: Request
 ): Promise<SessionPayload | null> {
-  const token = getCookie(req, SESSION_COOKIE);
+  const token =
+    getCookie(
+      req,
+      SESSION_COOKIE
+    );
 
   if (!token) {
     return null;
   }
 
-  return await verifySessionToken(token);
+  return await verifySessionToken(
+    token
+  );
 }
 
 export async function getDiscordUserFromOAuth(
   code: string
 ): Promise<DiscordUser> {
-  const body = new URLSearchParams({
-    client_id: config.discordOAuthClientId,
-    client_secret: config.discordOAuthClientSecret,
-    grant_type: "authorization_code",
-    code,
-    redirect_uri: config.discordOAuthRedirectUri
-  });
+  const body =
+    new URLSearchParams({
+      client_id:
+        config.discordOAuthClientId,
 
-  const tokenResponse = await fetch(
-    "https://discord.com/api/v10/oauth2/token",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded"
-      },
-      body
-    }
-  );
+      client_secret:
+        config.discordOAuthClientSecret,
+
+      grant_type:
+        "authorization_code",
+
+      code,
+
+      redirect_uri:
+        config.discordOAuthRedirectUri
+    });
+
+  const tokenResponse =
+    await fetch(
+      "https://discord.com/api/v10/oauth2/token",
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            "application/x-www-form-urlencoded"
+        },
+
+        body
+      }
+    );
 
   if (!tokenResponse.ok) {
-    const text = await tokenResponse.text();
+    const text =
+      await tokenResponse.text();
 
     throw new Error(
       `Discord OAuth token error ${tokenResponse.status}: ${text}`
     );
   }
 
-  const token =
-    await tokenResponse.json() as DiscordTokenResponse;
+  const token = (await tokenResponse.json()) as DiscordTokenResponse;
 
-  const userResponse = await fetch(
-    "https://discord.com/api/v10/users/@me",
-    {
-      headers: {
-        Authorization: `${token.token_type} ${token.access_token}`
+  const userResponse =
+    await fetch(
+      "https://discord.com/api/v10/users/@me",
+      {
+        headers: {
+          Authorization:
+            `${token.token_type} ${token.access_token}`
+        }
       }
-    }
-  );
+    );
 
   if (!userResponse.ok) {
-    const text = await userResponse.text();
+    const text =
+      await userResponse.text();
 
     throw new Error(
       `Discord OAuth user error ${userResponse.status}: ${text}`
     );
   }
 
-  return await userResponse.json() as DiscordUser;
+  return (await userResponse.json()) as DiscordUser;
 }
 
-export function discordLogin(req: Request, res: Response) {
-  const state = generateOAuthState();
+export function discordLogin(
+  req: Request,
+  res: Response
+) {
+  const state =
+    generateOAuthState();
 
   setCookie(
     res,
@@ -207,13 +282,20 @@ export function discordLogin(req: Request, res: Response) {
     OAUTH_STATE_MAX_AGE
   );
 
-  const params = new URLSearchParams({
-    client_id: config.discordOAuthClientId,
-    redirect_uri: config.discordOAuthRedirectUri,
-    response_type: "code",
-    scope: "identify",
-    state
-  });
+  const params =
+    new URLSearchParams({
+      client_id:
+        config.discordOAuthClientId,
+
+      redirect_uri:
+        config.discordOAuthRedirectUri,
+
+      response_type: "code",
+
+      scope: "identify",
+
+      state
+    });
 
   res.redirect(
     `https://discord.com/oauth2/authorize?${params.toString()}`
@@ -236,9 +318,11 @@ export async function discordCallback(
         : null;
 
     if (!code || !state) {
-      res.status(400).send(`
-        <!DOCTYPE html>
-        <html lang="fr">
+      res
+        .status(400)
+        .send(`
+          <!DOCTYPE html>
+          <html lang="fr">
           <head>
             <meta charset="UTF-8">
             <title>Authentification</title>
@@ -247,63 +331,75 @@ export async function discordCallback(
             <h1>Authentification invalide</h1>
             <p>Le code OAuth Discord est manquant.</p>
           </body>
-        </html>
-      `);
+          </html>
+        `);
 
       return;
     }
 
-    const storedState = getCookie(
-      req,
+    const storedState =
+      getCookie(
+        req,
+        OAUTH_STATE_COOKIE
+      );
+
+    if (
+      !storedState ||
+      storedState.length !==
+        state.length ||
+      !crypto.timingSafeEqual(
+        Buffer.from(storedState),
+        Buffer.from(state)
+      )
+    ) {
+      console.log(
+        "[OAuth] State verification failed"
+      );
+
+      res
+        .status(400)
+        .send(`
+          <!DOCTYPE html>
+          <html lang="fr">
+          <head>
+            <meta charset="UTF-8">
+            <title>Authentification</title>
+          </head>
+          <body>
+            <h1>Authentification refusée</h1>
+            <p>La vérification de sécurité a échoué.</p>
+          </body>
+          </html>
+        `);
+
+      return;
+    }
+
+    clearCookie(
+      res,
       OAUTH_STATE_COOKIE
     );
 
-    if (
-        !storedState ||
-        storedState.length !== state.length ||
-        !crypto.timingSafeEqual(
-            Buffer.from(storedState),
-            Buffer.from(state)
-        )
-        ) {
-        console.log("[OAuth] State verification failed");
-        console.log("[OAuth] Stored:", storedState);
-        console.log("[OAuth] Received:", state);
-
-        res.status(400).send(`
-            <!DOCTYPE html>
-            <html lang="fr">
-            <head>
-                <meta charset="UTF-8">
-                <title>Authentification</title>
-            </head>
-            <body>
-                <h1>Authentification refusée</h1>
-                <p>La vérification de sécurité a échoué.</p>
-            </body>
-            </html>
-        `);
-        return;
-    }
-
-    clearCookie(res, OAUTH_STATE_COOKIE);
-
     const discordUser =
-      await getDiscordUserFromOAuth(code);
+      await getDiscordUserFromOAuth(
+        code
+      );
 
-    const discordUserId = discordUser.id;
+    const discordUserId =
+      discordUser.id;
 
     const subscription =
-      await getSubscription(discordUserId);
+      await getSubscription(
+        discordUserId
+      );
 
     /*
-     * On crée toujours une session Discord valide.
-     *
-     * L'accès à Jellyfin est ensuite contrôlé à chaque requête
-     * avec PostgreSQL.
+     * Session Discord.
      */
     const sessionToken =
-      await createSessionToken(discordUserId);
+      await createSessionToken(
+        discordUserId
+      );
 
     setCookie(
       res,
@@ -313,40 +409,80 @@ export async function discordCallback(
     );
 
     /*
-     * Si l'utilisateur possède un abonnement actif mais
-     * que son utilisateur Jellyfin n'existe pas encore,
-     * on le crée automatiquement.
+     * Vérification abonnement.
      */
     if (
       subscription &&
       (
-        subscription.status === "active" ||
-        subscription.status === "trialing"
+        subscription.status ===
+          "active" ||
+        subscription.status ===
+          "trialing"
       )
     ) {
-      if (!subscription.jellyfin_user_id) {
-        const jellyfinUser =
-          await ensureSubscriptionUser(discordUserId);
+      /*
+       * Création + activation + authentification
+       * du compte Jellyfin.
+       */
+      const jellyfin =
+        await ensureSubscriptionUser(
+          discordUserId
+        );
 
+      /*
+       * On s'assure que PostgreSQL connaît
+       * toujours l'ID Jellyfin.
+       */
+      if (
+        !subscription.jellyfin_user_id ||
+        subscription.jellyfin_user_id !==
+          jellyfin.user.Id
+      ) {
         await setJellyfinUserId(
           discordUserId,
-          jellyfinUser.Id
+          jellyfin.user.Id
         );
       }
 
+      /*
+       * Le token Jellyfin est envoyé vers une
+       * page interne qui va initialiser Jellyfin Web.
+       *
+       * Il n'est PAS mis dans l'URL.
+       */
+      const token =
+        Buffer.from(
+          JSON.stringify({
+            accessToken:
+              jellyfin.accessToken,
+
+            userId:
+              jellyfin.user.Id,
+
+            serverId:
+              jellyfin.serverId
+          }),
+          "utf8"
+        ).toString(
+          "base64url"
+        );
+
       res.redirect(
-        `${config.publicBaseUrl}/web/#/`
+        `${config.publicBaseUrl}/auth/jellyfin?token=${encodeURIComponent(token)}`
       );
 
       return;
     }
 
-    res.status(403).send(`
-      <!DOCTYPE html>
-      <html lang="fr">
+    res
+      .status(403)
+      .send(`
+        <!DOCTYPE html>
+        <html lang="fr">
         <head>
           <meta charset="UTF-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <meta name="viewport"
+                content="width=device-width, initial-scale=1">
           <title>Abonnement requis</title>
 
           <style>
@@ -368,10 +504,6 @@ export async function discordCallback(
               background: #11191a;
               border: 1px solid rgba(185, 222, 197, 0.15);
               text-align: center;
-            }
-
-            h1 {
-              margin-top: 0;
             }
 
             p {
@@ -407,14 +539,20 @@ export async function discordCallback(
             </a>
           </div>
         </body>
-      </html>
-    `);
-  } catch (error) {
-    console.error("Discord OAuth callback error:", error);
+        </html>
+      `);
 
-    res.status(500).send(`
-      <!DOCTYPE html>
-      <html lang="fr">
+  } catch (error) {
+    console.error(
+      "Discord OAuth callback error:",
+      error
+    );
+
+    res
+      .status(500)
+      .send(`
+        <!DOCTYPE html>
+        <html lang="fr">
         <head>
           <meta charset="UTF-8">
           <title>Erreur</title>
@@ -422,22 +560,31 @@ export async function discordCallback(
 
         <body>
           <h1>Erreur d'authentification</h1>
-          <p>Impossible de terminer la connexion Discord.</p>
+          <p>
+            Impossible de terminer la connexion Discord.
+          </p>
         </body>
-      </html>
-    `);
+        </html>
+      `);
   }
 }
 
+/**
+ * Résultat du contrôle d'accès Jellyfin.
+ */
 export type JellyfinAccessResult =
   | {
       ok: true;
+
       discordUserId: string;
+
       jellyfinUserId: string;
     }
   | {
       ok: false;
+
       status: 401 | 403;
+
       message: string;
     };
 
@@ -451,18 +598,22 @@ export async function checkJellyfinAccess(
     return {
       ok: false,
       status: 401,
-      message: "Authentification Discord requise."
+      message:
+        "Authentification Discord requise."
     };
   }
 
   const subscription =
-    await getSubscription(session.discordUserId);
+    await getSubscription(
+      session.discordUserId
+    );
 
   if (!subscription) {
     return {
       ok: false,
       status: 403,
-      message: "Aucun abonnement trouvé."
+      message:
+        "Aucun abonnement trouvé."
     };
   }
 
@@ -474,22 +625,30 @@ export async function checkJellyfinAccess(
     return {
       ok: false,
       status: 403,
-      message: "Votre abonnement n'est plus actif."
+      message:
+        "Votre abonnement n'est plus actif."
     };
   }
 
-  if (!subscription.jellyfin_user_id) {
+  if (
+    !subscription.jellyfin_user_id
+  ) {
     return {
       ok: false,
       status: 403,
-      message: "Votre compte Jellyfin n'est pas encore configuré."
+      message:
+        "Votre compte Jellyfin n'est pas encore configuré."
     };
   }
 
   return {
     ok: true,
-    discordUserId: session.discordUserId,
-    jellyfinUserId: subscription.jellyfin_user_id
+
+    discordUserId:
+      session.discordUserId,
+
+    jellyfinUserId:
+      subscription.jellyfin_user_id
   };
 }
 
@@ -502,12 +661,15 @@ export async function requireJellyfinAccess(
     await checkJellyfinAccess(req);
 
   if (!access.ok) {
-    res.status(access.status).send(`
-      <!DOCTYPE html>
-      <html lang="fr">
+    res
+      .status(access.status)
+      .send(`
+        <!DOCTYPE html>
+        <html lang="fr">
         <head>
           <meta charset="UTF-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <meta name="viewport"
+                content="width=device-width, initial-scale=1">
           <title>Accès refusé</title>
 
           <style>
@@ -552,23 +714,27 @@ export async function requireJellyfinAccess(
         <body>
           <div class="card">
             <h1>Accès refusé</h1>
-            <p>${access.message}</p>
+
+            <p>
+              ${access.message}
+            </p>
+
             <a href="/auth/discord">
               Se connecter avec Discord
             </a>
           </div>
         </body>
-      </html>
-    `);
+        </html>
+      `);
 
     return;
   }
 
-  /*
-   * Disponible dans les handlers suivants si nécessaire.
-   */
-  res.locals.discordUserId = access.discordUserId;
-  res.locals.jellyfinUserId = access.jellyfinUserId;
+  res.locals.discordUserId =
+    access.discordUserId;
+
+  res.locals.jellyfinUserId =
+    access.jellyfinUserId;
 
   next();
 }

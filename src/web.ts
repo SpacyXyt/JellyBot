@@ -1,7 +1,12 @@
 import express from "express";
+
 import httpProxy from "http-proxy";
+
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+
+import {
+  fileURLToPath
+} from "node:url";
 
 import { config } from "./config.js";
 
@@ -17,8 +22,19 @@ import {
   checkJellyfinAccess
 } from "./auth.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import {
+  getSubscription
+} from "./db.js";
+
+import {
+  authenticateJellyfinUser
+} from "./jellyfin.js";
+
+const __filename =
+  fileURLToPath(import.meta.url);
+
+const __dirname =
+  path.dirname(__filename);
 
 export function startWeb() {
   const app = express();
@@ -31,7 +47,10 @@ export function startWeb() {
 
   app.use(
     express.static(
-      path.join(__dirname, "../public")
+      path.join(
+        __dirname,
+        "../public"
+      )
     )
   );
 
@@ -41,32 +60,34 @@ export function startWeb() {
    * ============================================================
    */
 
-  app.get("/health", (_req, res) => {
-    res.json({
-      ok: true
-    });
-  });
+  app.get(
+    "/health",
+    (_req, res) => {
+      res.json({
+        ok: true
+      });
+    }
+  );
 
   /*
    * ============================================================
    * STRIPE
-   *
-   * IMPORTANT :
-   * express.raw() doit être utilisé ici avant tout
-   * express.json(), car Stripe vérifie la signature avec
-   * le body brut.
    * ============================================================
    */
 
   app.post(
     "/webhooks/stripe",
+
     express.raw({
       type: "application/json"
     }),
+
     async (req, res) => {
       try {
         const signature =
-          req.headers["stripe-signature"];
+          req.headers[
+            "stripe-signature"
+          ];
 
         if (
           !signature ||
@@ -74,7 +95,9 @@ export function startWeb() {
         ) {
           res
             .status(400)
-            .send("Missing Stripe signature");
+            .send(
+              "Missing Stripe signature"
+            );
 
           return;
         }
@@ -86,13 +109,12 @@ export function startWeb() {
             config.stripeWebhookSecret
           );
 
-        /*
-         * Toute la logique Stripe doit être centralisée
-         * dans handleStripeEvent().
-         */
-        await handleStripeEvent(event);
+        await handleStripeEvent(
+          event
+        );
 
         res.sendStatus(200);
+
       } catch (error) {
         console.error(
           "Stripe webhook error:",
@@ -101,7 +123,9 @@ export function startWeb() {
 
         res
           .status(400)
-          .send("Webhook error");
+          .send(
+            "Webhook error"
+          );
       }
     }
   );
@@ -112,13 +136,21 @@ export function startWeb() {
    * ============================================================
    */
 
-  app.get("/success", (_req, res) => {
-    res.type("html").send(`
-      <!DOCTYPE html>
-      <html lang="fr">
+  app.get(
+    "/success",
+    (_req, res) => {
+      res.type("html").send(`
+        <!DOCTYPE html>
+
+        <html lang="fr">
         <head>
           <meta charset="UTF-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1">
+
+          <meta
+            name="viewport"
+            content="width=device-width, initial-scale=1"
+          >
+
           <title>Abonnement activé</title>
         </head>
 
@@ -131,20 +163,29 @@ export function startWeb() {
           </p>
 
           <a href="${config.publicBaseUrl}/auth/discord">
-            Accéder à mon compte
+            Accéder à Jellyfin
           </a>
         </body>
-      </html>
-    `);
-  });
+        </html>
+      `);
+    }
+  );
 
-  app.get("/cancel", (_req, res) => {
-    res.type("html").send(`
-      <!DOCTYPE html>
-      <html lang="fr">
+  app.get(
+    "/cancel",
+    (_req, res) => {
+      res.type("html").send(`
+        <!DOCTYPE html>
+
+        <html lang="fr">
         <head>
           <meta charset="UTF-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1">
+
+          <meta
+            name="viewport"
+            content="width=device-width, initial-scale=1"
+          >
+
           <title>Paiement annulé</title>
         </head>
 
@@ -159,9 +200,10 @@ export function startWeb() {
             Retour
           </a>
         </body>
-      </html>
-    `);
-  });
+        </html>
+      `);
+    }
+  );
 
   /*
    * ============================================================
@@ -181,55 +223,360 @@ export function startWeb() {
 
   /*
    * ============================================================
-   * LOGOUT
+   * JELLYFIN AUTO LOGIN
+   * ============================================================
    *
-   * Le cookie est supprimé côté navigateur.
-   * L'accès Jellyfin reste de toute façon protégé
-   * par PostgreSQL à chaque requête.
+   * Cette route reçoit un token temporaire généré par
+   * notre callback Discord.
+   *
+   * Elle vérifie encore une fois la session Discord + abonnement,
+   * puis initialise localStorage de Jellyfin Web.
+   *
+   * Le navigateur sera alors considéré comme connecté.
+   *
    * ============================================================
    */
 
-  app.get("/auth/logout", (_req, res) => {
-    res.append(
-      "Set-Cookie",
-      [
-        "jelly_session=",
-        "Path=/",
-        "HttpOnly",
-        "Secure",
-        "SameSite=Lax",
-        "Max-Age=0"
-      ].join("; ")
-    );
+  app.get(
+    "/auth/jellyfin",
+    async (req, res) => {
+      try {
+        const token =
+          typeof req.query.token === "string"
+            ? req.query.token
+            : null;
 
-    res.redirect(
-      config.publicBaseUrl
-    );
-  });
+        if (!token) {
+          res
+            .status(400)
+            .send(
+              "Missing authentication token"
+            );
+
+          return;
+        }
+
+        /*
+         * On vérifie la session Discord.
+         */
+        const access =
+          await checkJellyfinAccess(
+            req
+          );
+
+        if (!access.ok) {
+          res
+            .status(access.status)
+            .send(
+              access.message
+            );
+
+          return;
+        }
+
+        /*
+         * Décodage du payload.
+         */
+        let payload: {
+          accessToken: string;
+          userId: string;
+          serverId: string;
+        };
+
+        try {
+          payload =
+            JSON.parse(
+              Buffer.from(
+                token,
+                "base64url"
+              ).toString("utf8")
+            );
+        } catch {
+          res
+            .status(400)
+            .send(
+              "Invalid authentication token"
+            );
+
+          return;
+        }
+
+        /*
+         * Protection contre l'utilisation du token
+         * pour un autre utilisateur.
+         */
+        if (
+          payload.userId !==
+          access.jellyfinUserId
+        ) {
+          res
+            .status(403)
+            .send(
+              "Invalid Jellyfin user"
+            );
+
+          return;
+        }
+
+        /*
+         * Token Jellyfin nécessaire au Web client.
+         *
+         * Il est injecté dans localStorage,
+         * comme le fait un flux SSO Jellyfin.
+         */
+        const credentials = {
+          Servers: [
+            {
+              AccessToken:
+                payload.accessToken,
+
+              UserId:
+                payload.userId,
+
+              Id:
+                payload.serverId,
+
+              ServerId:
+                payload.serverId,
+
+              LocalAddress:
+                config.jellyfinProxyTarget,
+
+              RemoteAddress:
+                `${config.publicBaseUrl}${config.jellyfinProxyPath}`,
+
+              ManualAddress:
+                `${config.publicBaseUrl}${config.jellyfinProxyPath}`
+            }
+          ]
+        };
+
+        const userData = {
+          Id:
+            payload.userId,
+
+          ServerId:
+            payload.serverId,
+
+          EnableAutoLogin:
+            true
+        };
+
+        const credentialsJson =
+          JSON.stringify(
+            credentials
+          );
+
+        const userDataJson =
+          JSON.stringify(
+            userData
+          );
+
+        /*
+         * Protection XSS minimale :
+         * les valeurs sont injectées dans JSON.stringify
+         * puis dans un script.
+         *
+         * </script> est explicitement neutralisé.
+         */
+        const safeCredentials =
+          credentialsJson.replace(
+            /</g,
+            "\\u003c"
+          );
+
+        const safeUserData =
+          userDataJson.replace(
+            /</g,
+            "\\u003c"
+          );
+
+        res.type("html").send(`
+          <!DOCTYPE html>
+
+          <html lang="fr">
+          <head>
+            <meta charset="UTF-8">
+
+            <meta
+              name="viewport"
+              content="width=device-width, initial-scale=1"
+            >
+
+            <title>Connexion à Jellyfin</title>
+
+            <style>
+              html,
+              body {
+                margin: 0;
+                width: 100%;
+                height: 100%;
+                background: #090f10;
+                color: white;
+                font-family: Arial, sans-serif;
+              }
+
+              body {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+              }
+
+              .loading {
+                text-align: center;
+              }
+
+              .loading h1 {
+                margin-bottom: 8px;
+              }
+
+              .loading p {
+                color: #aab7b0;
+              }
+            </style>
+          </head>
+
+          <body>
+            <div class="loading">
+              <h1>Connexion à Jellyfin...</h1>
+              <p>
+                Votre abonnement est actif.
+              </p>
+            </div>
+
+            <script>
+              (() => {
+                try {
+                  const credentials =
+                    ${safeCredentials};
+
+                  const user =
+                    ${safeUserData};
+
+                  /*
+                   * Identifiants Jellyfin Web.
+                   */
+                  localStorage.setItem(
+                    "jellyfin_credentials",
+                    JSON.stringify(credentials)
+                  );
+
+                  /*
+                   * Informations utilisateur.
+                   */
+                  const userKey =
+                    "user-" +
+                    user.Id +
+                    "-" +
+                    user.ServerId;
+
+                  localStorage.setItem(
+                    userKey,
+                    JSON.stringify(user)
+                  );
+
+                  /*
+                   * Active l'auto-login Jellyfin.
+                   */
+                  localStorage.setItem(
+                    "enableAutoLogin",
+                    "true"
+                  );
+
+                  /*
+                   * Nettoyage de l'URL :
+                   * le token ne reste pas dans l'historique.
+                   */
+                  window.location.replace(
+                    ${JSON.stringify(
+                      `${config.publicBaseUrl}${config.jellyfinProxyPath}/web/`
+                    )}
+                  );
+
+                } catch (error) {
+                  console.error(
+                    "Jellyfin auto-login error:",
+                    error
+                  );
+
+                  document.body.innerHTML = \`
+                    <div class="loading">
+                      <h1>Erreur</h1>
+                      <p>
+                        Impossible de connecter automatiquement
+                        votre compte Jellyfin.
+                      </p>
+                      <p>
+                        Rechargez la page ou reconnectez-vous.
+                      </p>
+                    </div>
+                  \`;
+                }
+              })();
+            </script>
+          </body>
+          </html>
+        `);
+
+      } catch (error) {
+        console.error(
+          "Jellyfin auto-login error:",
+          error
+        );
+
+        res
+          .status(500)
+          .send(
+            "Unable to authenticate with Jellyfin"
+          );
+      }
+    }
+  );
+
+  /*
+   * ============================================================
+   * LOGOUT
+   * ============================================================
+   */
+
+  app.get(
+    "/auth/logout",
+    (_req, res) => {
+      res.append(
+        "Set-Cookie",
+        [
+          "jelly_session=",
+          "Path=/",
+          "HttpOnly",
+          "Secure",
+          "SameSite=Lax",
+          "Max-Age=0"
+        ].join("; ")
+      );
+
+      res.redirect(
+        config.publicBaseUrl
+      );
+    }
+  );
 
   /*
    * ============================================================
    * JELLYFIN REVERSE PROXY
-   *
-   * On conserve le préfixe /jellyfin.
-   *
-   * Exemple :
-   *
-   * https://jellybot.vexlabs.fr/jellyfin/web/
-   *
-   * devient côté Jellyfin :
-   *
-   * http://jellyfin:8096/jellyfin/web/
-   *
    * ============================================================
    */
 
   const jellyfinProxy =
     httpProxy.createProxyServer({
-      target: config.jellyfinProxyTarget,
+      target:
+        config.jellyfinProxyTarget,
+
       changeOrigin: true,
+
       ws: true,
+
       xfwd: true,
+
       secure: false
     });
 
@@ -241,21 +588,24 @@ export function startWeb() {
         error
       );
 
-      /*
-       * res peut être un ServerResponse ou un socket.
-       */
       if (
         res &&
         "writeHead" in res &&
-        typeof res.writeHead === "function"
+        typeof res.writeHead ===
+          "function"
       ) {
         const response =
-          res as import("node:http").ServerResponse;
+          res as import("node:http")
+            .ServerResponse;
 
         if (!response.headersSent) {
-          response.writeHead(502, {
-            "Content-Type": "text/plain; charset=utf-8"
-          });
+          response.writeHead(
+            502,
+            {
+              "Content-Type":
+                "text/plain; charset=utf-8"
+            }
+          );
         }
 
         response.end(
@@ -266,19 +616,25 @@ export function startWeb() {
   );
 
   /*
-   * HTTP classique :
-   *
-   * On ne monte PAS app.use("/jellyfin", ...)
-   * afin de conserver /jellyfin dans req.url.
+   * ============================================================
+   * HTTP JELLYFIN PROXY
+   * ============================================================
    */
+
   app.use(
-    async (req, res, next) => {
+    async (
+      req,
+      res,
+      next
+    ) => {
       const prefix =
         config.jellyfinProxyPath;
 
       const isJellyfinRequest =
         req.path === prefix ||
-        req.path.startsWith(`${prefix}`);
+        req.path.startsWith(
+          `${prefix}/`
+        );
 
       if (!isJellyfinRequest) {
         next();
@@ -288,15 +644,68 @@ export function startWeb() {
       await requireJellyfinAccess(
         req,
         res,
-        () => {
-          jellyfinProxy.web(
-            req,
-            res,
-            {
-              target:
-                config.jellyfinProxyTarget
+        async () => {
+          try {
+            /*
+             * Récupération de la session Discord.
+             */
+            const discordUserId =
+              res.locals.discordUserId;
+
+            /*
+             * On authentifie le compte Jellyfin
+             * côté serveur.
+             */
+            const jellyfin =
+              await authenticateJellyfinUser(
+                discordUserId
+              );
+
+            /*
+             * Le navigateur peut envoyer son propre
+             * Authorization / X-Emby-Token.
+             *
+             * On les supprime pour empêcher qu'un token
+             * appartenant à un autre compte soit utilisé.
+             */
+            delete req.headers.authorization;
+
+            delete req.headers[
+              "x-emby-token"
+            ];
+
+            delete req.headers[
+              "x-mediabrowser-token"
+            ];
+
+            jellyfinProxy.web(
+              req,
+              res,
+              {
+                target:
+                  config.jellyfinProxyTarget,
+
+                headers: {
+                  "X-Emby-Token":
+                    jellyfin.accessToken
+                }
+              }
+            );
+
+          } catch (error) {
+            console.error(
+              "Jellyfin authentication error:",
+              error
+            );
+
+            if (!res.headersSent) {
+              res
+                .status(502)
+                .send(
+                  "Unable to authenticate with Jellyfin"
+                );
             }
-          );
+          }
         }
       );
     }
@@ -310,9 +719,11 @@ export function startWeb() {
 
   app.use(
     (_req, res) => {
-      res.status(404).json({
-        error: "Not found"
-      });
+      res
+        .status(404)
+        .json({
+          error: "Not found"
+        });
     }
   );
 
@@ -340,18 +751,16 @@ export function startWeb() {
   /*
    * ============================================================
    * JELLYFIN WEBSOCKETS
-   *
-   * Jellyfin utilise des WebSockets.
-   *
-   * Express ne passe pas par les middlewares HTTP classiques
-   * lors d'un "upgrade", donc on vérifie manuellement la
-   * session JWT ici.
    * ============================================================
    */
 
   server.on(
     "upgrade",
-    async (req, socket, head) => {
+    async (
+      req,
+      socket,
+      head
+    ) => {
       try {
         const rawUrl =
           req.url || "/";
@@ -370,20 +779,19 @@ export function startWeb() {
           config.jellyfinProxyPath;
 
         const isJellyfinRequest =
-          parsed.pathname === prefix ||
+          parsed.pathname ===
+            prefix ||
           parsed.pathname.startsWith(
             `${prefix}/`
           );
 
-        /*
-         * Le serveur Express peut avoir d'autres WebSockets
-         * dans le futur. On ne détruit donc pas ceux qui ne
-         * concernent pas Jellyfin.
-         */
         if (!isJellyfinRequest) {
           return;
         }
 
+        /*
+         * Vérification Discord + Stripe.
+         */
         const access =
           await checkJellyfinAccess(
             req as any
@@ -397,9 +805,13 @@ export function startWeb() {
                   ? "Unauthorized"
                   : "Forbidden"
               }`,
+
               "Content-Type: text/plain",
+
               "Connection: close",
+
               "",
+
               access.message
             ].join("\r\n")
           );
@@ -410,21 +822,45 @@ export function startWeb() {
         }
 
         /*
-         * On conserve /jellyfin dans l'URL.
-         * Jellyfin doit donc avoir comme Base URL :
-         *
-         * /jellyfin
+         * Authentification Jellyfin côté serveur.
          */
+        const jellyfin =
+          await authenticateJellyfinUser(
+            access.discordUserId
+          );
 
+        /*
+         * Empêche le client d'envoyer son propre token.
+         */
+        delete req.headers.authorization;
+
+        delete req.headers[
+          "x-emby-token"
+        ];
+
+        delete req.headers[
+          "x-mediabrowser-token"
+        ];
+
+        /*
+         * Proxy WebSocket avec le token
+         * du compte Jellyfin correspondant.
+         */
         jellyfinProxy.ws(
           req,
           socket,
           head,
           {
             target:
-              config.jellyfinProxyTarget
+              config.jellyfinProxyTarget,
+
+            headers: {
+              "X-Emby-Token":
+                jellyfin.accessToken
+            }
           }
         );
+
       } catch (error) {
         console.error(
           "Jellyfin WebSocket auth error:",
