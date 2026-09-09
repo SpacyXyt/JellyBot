@@ -10,7 +10,7 @@ async function main() {
 
   client.on("interactionCreate", async interaction => {
     try {
-      await handleInteraction(interaction, createCheckout);
+      await handleInteraction(interaction);
     } catch (error) {
       console.error("Discord interaction error:", error);
 

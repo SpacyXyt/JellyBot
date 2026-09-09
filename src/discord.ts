@@ -11,7 +11,8 @@ import {
   type ChatInputCommandInteraction,
   type ButtonInteraction,
   type Interaction,
-  type Message
+  type Message,
+  TextChannel
 } from "discord.js";
 
 import { config } from "./config.js";
@@ -185,9 +186,9 @@ async function deleteAllMessages(
 
 export async function setupSubscribeChannel() {
   const channel =
-    await client.channels.fetch(
+    client.channels.cache.get(
       config.discordSubscribeChannelId
-    );
+    ) as TextChannel;
 
   if (
     !channel ||
