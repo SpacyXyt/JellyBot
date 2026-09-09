@@ -100,7 +100,7 @@ export const config = {
    */
   jellyfinProxyPath:
     process.env.JELLYFIN_PROXY_PATH ||
-    "/jellyfin",
+    "",
 
   jellyfinProxyTarget:
     process.env.JELLYFIN_PROXY_TARGET ||
