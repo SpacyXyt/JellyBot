@@ -679,7 +679,6 @@ function formatMoney(
 async function handleMessageCreate(
   message: Message
 ) {
-  console.log(message);
   if (
     message.author.bot
   ) {
