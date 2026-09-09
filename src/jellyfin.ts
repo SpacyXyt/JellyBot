@@ -196,40 +196,45 @@ export async function findUserByName(
 /**
  * Crée le compte Jellyfin s'il n'existe pas.
  */
+const pendingUserCreations = new Map<string, Promise<JellyfinUser>>();
+
 export async function createOrGetJellyfinUser(
   discordUserId: string
 ): Promise<JellyfinUser> {
-  const name =
-    safeName(discordUserId);
+  const pending = pendingUserCreations.get(discordUserId);
+  if (pending) return pending;
 
-  const existing =
-    await findUserByName(name);
-
-  if (existing) {
-    return existing;
+  const creation = createJellyfinUserIfMissing(discordUserId);
+  pendingUserCreations.set(discordUserId, creation);
+  try {
+    return await creation;
+  } finally {
+    pendingUserCreations.delete(discordUserId);
   }
+}
 
-  const password =
-    jellyfinPassword(discordUserId);
+async function createJellyfinUserIfMissing(
+  discordUserId: string
+): Promise<JellyfinUser> {
+  const name = safeName(discordUserId);
+  const existing = await findUserByName(name);
+  if (existing) return existing;
 
-  return await jf<JellyfinUser>(
-    "/Users/New",
-    {
+  try {
+    return await jf<JellyfinUser>("/Users/New", {
       method: "POST",
-
       body: JSON.stringify({
         Name: name,
-
-        Password: password,
-
-        AuthenticationProviderId:
-          "Jellyfin.Server.Implementations.Users.DefaultAuthenticationProvider",
-
-        PasswordResetProviderId:
-          "Jellyfin.Server.Implementations.Users.DefaultPasswordResetProvider"
+        Password: jellyfinPassword(discordUserId)
       })
-    }
-  );
+    });
+  } catch (error) {
+    // Another process may have created the account, or Jellyfin may have
+    // committed the creation before returning an error. Never retry POST blindly.
+    const created = await findUserByName(name).catch(() => null);
+    if (created) return created;
+    throw error;
+  }
 }
 
 /**

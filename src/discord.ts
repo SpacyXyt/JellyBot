@@ -5,6 +5,8 @@ import {
   ButtonStyle,
   Client,
   GatewayIntentBits,
+  Events,
+  MessageFlags,
   REST,
   Routes,
   SlashCommandBuilder,
@@ -13,8 +15,7 @@ import {
   type Interaction,
   type Message,
   TextChannel,
-  type Guild,
-  type Invite
+  type Guild
 } from "discord.js";
 
 import { config } from "./config.js";
@@ -518,17 +519,16 @@ async function handleReferralCommand(
   if (
     !interaction.inGuild()
   ) {
-    await interaction.reply({
+    await interaction.editReply({
       content:
         "Cette commande doit être utilisée dans le serveur Discord.",
-      ephemeral: true
     });
 
     return;
   }
 
-  const member =
-    interaction.member as import("discord.js").GuildMember;
+  const guild = await client.guilds.fetch(interaction.guildId);
+  const member = await guild.members.fetch(interaction.user.id);
 
   const hasSubscriberRole =
     member.roles.cache.has(
@@ -538,13 +538,12 @@ async function handleReferralCommand(
   if (
     !hasSubscriberRole
   ) {
-    await interaction.reply({
+    await interaction.editReply({
       content: [
         "❌ Vous ne pouvez pas créer d'invitation de parrainage.",
         "",
         `Vous devez posséder le rôle <@&${config.subscriberRoleId}>.`
       ].join("\n"),
-      ephemeral: true
     });
 
     return;
@@ -564,10 +563,9 @@ async function handleReferralCommand(
       !referralChannel ||
       !referralChannel.isTextBased()
     ) {
-      await interaction.reply({
+      await interaction.editReply({
         content:
           "Le salon de parrainage n'est pas correctement configuré.",
-        ephemeral: true
       });
 
       return;
@@ -615,7 +613,7 @@ async function handleReferralCommand(
     const inviteUrl =
       `https://discord.gg/${invite.code}`;
 
-    await interaction.reply({
+    await interaction.editReply({
       content: [
         "🎁 **Votre invitation de parrainage**",
         "",
@@ -630,7 +628,6 @@ async function handleReferralCommand(
         "",
         "Vous recevez **15 %** des paiements Stripe générés par vos filleuls."
       ].join("\n"),
-      ephemeral: true
     });
   } catch (error) {
     console.error(
@@ -638,13 +635,12 @@ async function handleReferralCommand(
       error
     );
 
-    await interaction.reply({
+    await interaction.editReply({
       content: [
         "❌ Impossible de créer votre invitation.",
         "",
         "Vérifiez que le bot possède la permission **Créer une invitation** dans le salon de parrainage."
       ].join("\n"),
-      ephemeral: true
     });
   }
 }
@@ -712,10 +708,6 @@ async function handleSubscriptionCommand(
   interaction: ChatInputCommandInteraction
 ) {
   try {
-    await interaction.deferReply({
-      flags: 64
-    });
-
     const url = await createCheckout(
       interaction.user.id
     );
@@ -755,10 +747,9 @@ async function handleStatusCommand(
     );
 
   if (!subscription) {
-    await interaction.reply({
+    await interaction.editReply({
       content:
         "Aucun abonnement enregistré.",
-      ephemeral: true
     });
 
     return;
@@ -771,7 +762,7 @@ async function handleStatusCommand(
     status === "active" ||
     status === "trialing";
 
-  await interaction.reply({
+  await interaction.editReply({
     content: [
       `Statut : **${status}**`,
       `Accès Jellyfin : **${
@@ -780,7 +771,6 @@ async function handleStatusCommand(
           : "INACTIF"
       }**`
     ].join("\n"),
-    ephemeral: true
   });
 }
 
@@ -799,10 +789,9 @@ async function handleAccountCommand(
     );
 
   if (!subscription) {
-    await interaction.reply({
+    await interaction.editReply({
       content:
         "Vous n'avez aucun abonnement enregistré.",
-      ephemeral: true
     });
 
     return;
@@ -813,12 +802,11 @@ async function handleAccountCommand(
     subscription.status === "trialing";
 
   if (!active) {
-    await interaction.reply({
+    await interaction.editReply({
       content: [
         "Votre abonnement n'est pas actif.",
         `Statut actuel : **${subscription.status}**`
       ].join("\n"),
-      ephemeral: true
     });
 
     return;
@@ -827,10 +815,9 @@ async function handleAccountCommand(
   if (
     !subscription.jellyfin_user_id
   ) {
-    await interaction.reply({
+    await interaction.editReply({
       content:
         "Votre abonnement est actif, mais votre compte Jellyfin est encore en cours de configuration.",
-      ephemeral: true
     });
 
     return;
@@ -854,14 +841,13 @@ async function handleAccountCommand(
         button
       );
 
-  await interaction.reply({
+  await interaction.editReply({
     content: [
       "Votre abonnement est **actif**.",
       "",
       "Cliquez sur le bouton ci-dessous pour vous authentifier avec Discord et accéder à Jellyfin."
     ].join("\n"),
     components: [row],
-    ephemeral: true
   });
 }
 
@@ -880,10 +866,6 @@ async function handleButtonInteraction(
 
   try {
     // Réponse immédiate à Discord
-    await interaction.deferReply({
-      flags: 64
-    });
-
     // Création du checkout après avoir acquitté l'interaction
     const url = await createCheckout(
       interaction.user.id
@@ -917,75 +899,53 @@ async function handleButtonInteraction(
  * ============================================================
  */
 
-export async function handleInteraction(
-  interaction: Interaction
-) {
-  if (
-    interaction.isButton()
-  ) {
-    await handleButtonInteraction(
-      interaction
-    );
+// Avoid processing the same gateway object twice if a caller accidentally
+// dispatches it again while the initial acknowledgement is still pending.
+const handledInteractions = new WeakSet<Interaction>();
 
-    return;
-  }
+export async function handleInteraction(interaction: Interaction) {
+  const supported = interaction.isButton()
+    ? interaction.customId === "subscribe"
+    : interaction.isChatInputCommand() &&
+      ["abonnement", "compte", "statut", "parrainage"].includes(interaction.commandName);
 
-  if (
-    !interaction.isChatInputCommand()
-  ) {
+  if (!supported || handledInteractions.has(interaction)) return;
+  if (!interaction.isButton() && !interaction.isChatInputCommand()) return;
+  handledInteractions.add(interaction);
+
+  try {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  } catch (error) {
+    // An expired or already acknowledged interaction cannot be acknowledged again.
+    const code = (error as { code?: string | number }).code;
+    console.error("Discord acknowledgement failed:", { interactionId: interaction.id, code });
     return;
   }
 
   try {
-    switch (
-      interaction.commandName
-    ) {
+    if (interaction.isButton()) {
+      await handleButtonInteraction(interaction);
+      return;
+    }
+
+    switch (interaction.commandName) {
       case "abonnement":
-        await handleSubscriptionCommand(
-          interaction
-        );
+        await handleSubscriptionCommand(interaction);
         break;
-
       case "compte":
-        await handleAccountCommand(
-          interaction
-        );
+        await handleAccountCommand(interaction);
         break;
-
       case "statut":
-        await handleStatusCommand(
-          interaction
-        );
+        await handleStatusCommand(interaction);
         break;
-
       case "parrainage":
-        await handleReferralCommand(
-          interaction
-        );
+        await handleReferralCommand(interaction);
         break;
     }
   } catch (error) {
-    console.error(
-      "Discord interaction error:",
-      error
-    );
-
-    if (
-      interaction.replied ||
-      interaction.deferred
-    ) {
-      await interaction.followUp({
-        content:
-          "Une erreur est survenue.",
-        ephemeral: true
-      });
-    } else {
-      await interaction.reply({
-        content:
-          "Une erreur est survenue.",
-        ephemeral: true
-      });
-    }
+    console.error("Discord interaction error:", error);
+    await interaction.editReply({ content: "Une erreur est survenue." })
+      .catch(() => undefined);
   }
 }
 
@@ -997,18 +957,18 @@ export async function handleInteraction(
 
 export async function initializeDiscord() {
   client.on(
-    "interactionCreate",
+    Events.InteractionCreate,
     handleInteraction
   );
 
   client.on(
-    "messageCreate",
-    handleMessageCreate
+    Events.MessageCreate,
+    message => { void handleMessageCreate(message).catch(console.error); }
   );
 
   client.on(
-    "guildMemberAdd",
-    handleGuildMemberAdd
+    Events.GuildMemberAdd,
+    member => { void handleGuildMemberAdd(member).catch(console.error); }
   );
 
   await client.login(
@@ -1023,7 +983,7 @@ export async function initializeDiscord() {
       }
 
       client.once(
-        "ready",
+        Events.ClientReady,
         () => resolve()
       );
     }
