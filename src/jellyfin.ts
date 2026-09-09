@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+
 import { config } from "./config.js";
 
 type JellyfinUser = {
@@ -10,11 +11,14 @@ type JellyfinUser = {
     IsAdministrator?: boolean;
     IsHidden?: boolean;
     IsDisabled?: boolean;
+
     EnableAllFolders?: boolean;
     EnabledFolders?: string[];
+
     EnableRemoteAccess?: boolean;
     EnableContentDownloading?: boolean;
     EnableContentDeletion?: boolean;
+
     EnableMediaPlayback?: boolean;
     EnableAudioPlaybackTranscoding?: boolean;
     EnableVideoPlaybackTranscoding?: boolean;
@@ -29,9 +33,11 @@ type JellyfinAuthenticationResult = {
   User: JellyfinUser;
   AccessToken: string;
   ServerId: string;
+
   SessionInfo?: {
     Id?: string;
     UserId?: string;
+
     [key: string]: any;
   };
 };
@@ -42,6 +48,68 @@ export type JellyfinSession = {
   serverId: string;
 };
 
+/**
+ * Identifiant du client Jellyfin.
+ *
+ * Il est volontairement stable pour notre backend.
+ */
+const JELLYFIN_CLIENT = "JellyBot";
+const JELLYFIN_DEVICE = "Discord";
+const JELLYFIN_VERSION = "1.0.0";
+
+/**
+ * Génère un DeviceId unique et stable pour chaque
+ * utilisateur Discord.
+ *
+ * Jellyfin associe les sessions/access tokens au DeviceId.
+ */
+function jellyfinDeviceId(discordUserId: string): string {
+  return crypto
+    .createHash("sha256")
+    .update(`jellybot-device:${discordUserId}`)
+    .digest("hex");
+}
+
+/**
+ * Header Authorization moderne de Jellyfin.
+ *
+ * IMPORTANT :
+ * On utilise le schéma MediaBrowser.
+ *
+ * Ne pas utiliser :
+ * - X-Emby-Authorization
+ * - X-Emby-Token
+ * - X-MediaBrowser-Token
+ */
+function jellyfinAuthorization(
+  discordUserId: string,
+  accessToken?: string
+): string {
+  const deviceId = jellyfinDeviceId(discordUserId);
+
+  let header =
+    `MediaBrowser ` +
+    `Client="${JELLYFIN_CLIENT}", ` +
+    `Device="${JELLYFIN_DEVICE}", ` +
+    `DeviceId="${deviceId}", ` +
+    `Version="${JELLYFIN_VERSION}"`;
+
+  if (accessToken) {
+    header =
+      `MediaBrowser ` +
+      `Token="${accessToken}", ` +
+      `Client="${JELLYFIN_CLIENT}", ` +
+      `Device="${JELLYFIN_DEVICE}", ` +
+      `DeviceId="${deviceId}", ` +
+      `Version="${JELLYFIN_VERSION}"`;
+  }
+
+  return header;
+}
+
+/**
+ * Requête API Jellyfin avec la clé API administrateur.
+ */
 async function jf<T = any>(
   path: string,
   init: RequestInit = {}
@@ -53,7 +121,11 @@ async function jf<T = any>(
 
       headers: {
         Authorization:
-          `MediaBrowser Token="${config.jellyfinApiKey}"`,
+          `MediaBrowser Token="${config.jellyfinApiKey}", ` +
+          `Client="${JELLYFIN_CLIENT}", ` +
+          `Device="Backend", ` +
+          `DeviceId="jellybot-backend", ` +
+          `Version="${JELLYFIN_VERSION}"`,
 
         "Content-Type": "application/json",
 
@@ -93,7 +165,9 @@ function safeName(discordUserId: string): string {
  * ne change pas SESSION_SECRET une fois des utilisateurs créés,
  * sinon les anciens mots de passe calculés ne correspondront plus.
  */
-function jellyfinPassword(discordUserId: string): string {
+function jellyfinPassword(
+  discordUserId: string
+): string {
   return crypto
     .createHmac(
       "sha256",
@@ -161,7 +235,8 @@ export async function createOrGetJellyfinUser(
 /**
  * Définit le mot de passe interne du compte Jellyfin.
  *
- * On utilise l'API admin de Jellyfin.
+ * Utilisé pour les comptes créés avec une ancienne version
+ * du bot qui n'avaient éventuellement pas encore de mot de passe.
  */
 async function setJellyfinPassword(
   userId: string,
@@ -182,8 +257,7 @@ async function setJellyfinPassword(
 }
 
 /**
- * Authentifie le compte Jellyfin et récupère
- * son AccessToken.
+ * Authentifie le compte Jellyfin et récupère son AccessToken.
  */
 export async function authenticateJellyfinUser(
   discordUserId: string
@@ -198,11 +272,15 @@ export async function authenticateJellyfinUser(
   const password =
     jellyfinPassword(discordUserId);
 
+  const authorization =
+    jellyfinAuthorization(
+      discordUserId
+    );
+
   /**
-   * Jellyfin AuthenticateByName ne nécessite
-   * pas le token admin.
+   * Première tentative.
    */
-  const response = await fetch(
+  let response = await fetch(
     `${config.jellyfinUrl}/Users/AuthenticateByName`,
     {
       method: "POST",
@@ -211,8 +289,8 @@ export async function authenticateJellyfinUser(
         "Content-Type":
           "application/json",
 
-        "X-Emby-Authorization":
-          'MediaBrowser Client="VexLabs", Device="Web", DeviceId="vexlabs-discord", Version="1.0.0"'
+        Authorization:
+          authorization
       },
 
       body: JSON.stringify({
@@ -223,10 +301,8 @@ export async function authenticateJellyfinUser(
   );
 
   /**
-   * Si le compte existait avant cette nouvelle version
-   * du code, il peut ne pas encore avoir de mot de passe.
-   *
-   * On le configure alors avec notre mot de passe interne.
+   * Les anciens comptes peuvent ne pas avoir
+   * le mot de passe généré par le bot.
    */
   if (response.status === 401) {
     await setJellyfinPassword(
@@ -234,44 +310,29 @@ export async function authenticateJellyfinUser(
       password
     );
 
-    const retry =
-      await fetch(
-        `${config.jellyfinUrl}/Users/AuthenticateByName`,
-        {
-          method: "POST",
+    /**
+     * Nouvelle tentative après configuration
+     * du mot de passe.
+     */
+    response = await fetch(
+      `${config.jellyfinUrl}/Users/AuthenticateByName`,
+      {
+        method: "POST",
 
-          headers: {
-            "Content-Type":
-              "application/json",
+        headers: {
+          "Content-Type":
+            "application/json",
 
-            "X-Emby-Authorization":
-              'MediaBrowser Client="VexLabs", Device="Web", DeviceId="vexlabs-discord", Version="1.0.0"'
-          },
+          Authorization:
+            authorization
+        },
 
-          body: JSON.stringify({
-            Username: username,
-            Pw: password
-          })
-        }
-      );
-
-    if (!retry.ok) {
-      const text =
-        await retry.text();
-
-      throw new Error(
-        `Jellyfin authentication failed after password setup ${retry.status}: ${text}`
-      );
-    }
-
-    const auth =
-      await retry.json() as JellyfinAuthenticationResult;
-
-    return {
-      user: auth.User,
-      accessToken: auth.AccessToken,
-      serverId: auth.ServerId
-    };
+        body: JSON.stringify({
+          Username: username,
+          Pw: password
+        })
+      }
+    );
   }
 
   if (!response.ok) {
@@ -285,6 +346,18 @@ export async function authenticateJellyfinUser(
 
   const auth =
     await response.json() as JellyfinAuthenticationResult;
+
+  if (!auth.AccessToken) {
+    throw new Error(
+      "Jellyfin authentication succeeded but no AccessToken was returned"
+    );
+  }
+
+  if (!auth.User?.Id) {
+    throw new Error(
+      "Jellyfin authentication succeeded but no user was returned"
+    );
+  }
 
   return {
     user: auth.User,
@@ -330,7 +403,8 @@ export async function setUserActive(
 
     EnableContentDeletion: false,
 
-    EnableMediaPlayback: active,
+    EnableMediaPlayback:
+      active,
 
     EnableAudioPlaybackTranscoding:
       active,

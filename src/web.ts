@@ -1,9 +1,7 @@
 import express from "express";
-
 import httpProxy from "http-proxy";
-
+import crypto from "node:crypto";
 import path from "node:path";
-
 import {
   fileURLToPath
 } from "node:url";
@@ -23,10 +21,6 @@ import {
 } from "./auth.js";
 
 import {
-  getSubscription
-} from "./db.js";
-
-import {
   authenticateJellyfinUser
 } from "./jellyfin.js";
 
@@ -36,10 +30,53 @@ const __filename =
 const __dirname =
   path.dirname(__filename);
 
+/**
+ * Informations utilisées par Jellyfin
+ * pour identifier notre client.
+ */
+const JELLYFIN_CLIENT = "JellyBot";
+const JELLYFIN_DEVICE = "Discord";
+const JELLYFIN_VERSION = "1.0.0";
+
+/**
+ * Génère le même DeviceId que jellyfin.ts.
+ */
+function jellyfinDeviceId(
+  discordUserId: string
+): string {
+  return crypto
+    .createHash("sha256")
+    .update(
+      `jellybot-device:${discordUserId}`
+    )
+    .digest("hex");
+}
+
+/**
+ * Génère le header Authorization moderne
+ * de Jellyfin.
+ */
+function jellyfinAuthorization(
+  discordUserId: string,
+  accessToken: string
+): string {
+  const deviceId =
+    jellyfinDeviceId(discordUserId);
+
+  return (
+    `MediaBrowser ` +
+    `Token="${accessToken}", ` +
+    `Client="${JELLYFIN_CLIENT}", ` +
+    `Device="${JELLYFIN_DEVICE}", ` +
+    `DeviceId="${deviceId}", ` +
+    `Version="${JELLYFIN_VERSION}"`
+  );
+}
+
 export function startWeb() {
   const app = express();
 
-  /*
+  /**
    * ============================================================
    * PUBLIC
    * ============================================================
@@ -54,7 +91,7 @@ export function startWeb() {
     )
   );
 
-  /*
+  /**
    * ============================================================
    * HEALTH
    * ============================================================
@@ -69,7 +106,7 @@ export function startWeb() {
     }
   );
 
-  /*
+  /**
    * ============================================================
    * STRIPE
    * ============================================================
@@ -77,11 +114,9 @@ export function startWeb() {
 
   app.post(
     "/webhooks/stripe",
-
     express.raw({
       type: "application/json"
     }),
-
     async (req, res) => {
       try {
         const signature =
@@ -114,7 +149,6 @@ export function startWeb() {
         );
 
         res.sendStatus(200);
-
       } catch (error) {
         console.error(
           "Stripe webhook error:",
@@ -130,7 +164,7 @@ export function startWeb() {
     }
   );
 
-  /*
+  /**
    * ============================================================
    * STRIPE SUCCESS / CANCEL
    * ============================================================
@@ -141,7 +175,6 @@ export function startWeb() {
     (_req, res) => {
       res.type("html").send(`
         <!DOCTYPE html>
-
         <html lang="fr">
         <head>
           <meta charset="UTF-8">
@@ -176,7 +209,6 @@ export function startWeb() {
     (_req, res) => {
       res.type("html").send(`
         <!DOCTYPE html>
-
         <html lang="fr">
         <head>
           <meta charset="UTF-8">
@@ -205,7 +237,7 @@ export function startWeb() {
     }
   );
 
-  /*
+  /**
    * ============================================================
    * DISCORD OAUTH
    * ============================================================
@@ -221,18 +253,17 @@ export function startWeb() {
     discordCallback
   );
 
-  /*
+  /**
    * ============================================================
    * JELLYFIN AUTO LOGIN
    * ============================================================
    *
-   * Cette route reçoit un token temporaire généré par
-   * notre callback Discord.
+   * Cette route reçoit le token temporaire généré
+   * par le callback Discord.
    *
-   * Elle vérifie encore une fois la session Discord + abonnement,
-   * puis initialise localStorage de Jellyfin Web.
+   * Elle vérifie la session Discord + abonnement.
    *
-   * Le navigateur sera alors considéré comme connecté.
+   * Puis elle initialise le localStorage de Jellyfin Web.
    *
    * ============================================================
    */
@@ -256,8 +287,9 @@ export function startWeb() {
           return;
         }
 
-        /*
-         * On vérifie la session Discord.
+        /**
+         * Vérification de la session Discord
+         * et de l'abonnement.
          */
         const access =
           await checkJellyfinAccess(
@@ -274,7 +306,7 @@ export function startWeb() {
           return;
         }
 
-        /*
+        /**
          * Décodage du payload.
          */
         let payload: {
@@ -301,7 +333,25 @@ export function startWeb() {
           return;
         }
 
-        /*
+        /**
+         * Vérification du contenu du token.
+         */
+        if (
+          !payload ||
+          typeof payload.accessToken !== "string" ||
+          typeof payload.userId !== "string" ||
+          typeof payload.serverId !== "string"
+        ) {
+          res
+            .status(400)
+            .send(
+              "Invalid authentication payload"
+            );
+
+          return;
+        }
+
+        /**
          * Protection contre l'utilisation du token
          * pour un autre utilisateur.
          */
@@ -318,11 +368,20 @@ export function startWeb() {
           return;
         }
 
-        /*
-         * Token Jellyfin nécessaire au Web client.
+        /**
+         * URL publique utilisée par Jellyfin Web.
          *
-         * Il est injecté dans localStorage,
-         * comme le fait un flux SSO Jellyfin.
+         * IMPORTANT :
+         * ne jamais envoyer jellyfinProxyTarget
+         * au navigateur car il peut s'agir de :
+         *
+         * http://10.8.0.2:8096
+         */
+        const publicJellyfinUrl =
+          `${config.publicBaseUrl}${config.jellyfinProxyPath}`;
+
+        /**
+         * Credentials utilisés par Jellyfin Web.
          */
         const credentials = {
           Servers: [
@@ -340,17 +399,20 @@ export function startWeb() {
                 payload.serverId,
 
               LocalAddress:
-                config.jellyfinProxyTarget,
+                publicJellyfinUrl,
 
               RemoteAddress:
-                `${config.publicBaseUrl}${config.jellyfinProxyPath}`,
+                publicJellyfinUrl,
 
               ManualAddress:
-                `${config.publicBaseUrl}${config.jellyfinProxyPath}`
+                publicJellyfinUrl
             }
           ]
         };
 
+        /**
+         * Informations utilisateur Jellyfin.
+         */
         const userData = {
           Id:
             payload.userId,
@@ -372,12 +434,8 @@ export function startWeb() {
             userData
           );
 
-        /*
-         * Protection XSS minimale :
-         * les valeurs sont injectées dans JSON.stringify
-         * puis dans un script.
-         *
-         * </script> est explicitement neutralisé.
+        /**
+         * Protection contre l'injection HTML.
          */
         const safeCredentials =
           credentialsJson.replace(
@@ -391,10 +449,20 @@ export function startWeb() {
             "\\u003c"
           );
 
+        /**
+         * Nettoyage de l'URL après utilisation.
+         *
+         * Le token n'est pas conservé dans l'URL
+         * une fois Jellyfin chargé.
+         */
+        const jellyfinWebUrl =
+          `${publicJellyfinUrl}/web/`;
+
         res.type("html").send(`
           <!DOCTYPE html>
 
           <html lang="fr">
+
           <head>
             <meta charset="UTF-8">
 
@@ -411,9 +479,13 @@ export function startWeb() {
                 margin: 0;
                 width: 100%;
                 height: 100%;
+
                 background: #090f10;
                 color: white;
-                font-family: Arial, sans-serif;
+
+                font-family:
+                  Arial,
+                  sans-serif;
               }
 
               body {
@@ -438,7 +510,10 @@ export function startWeb() {
 
           <body>
             <div class="loading">
-              <h1>Connexion à Jellyfin...</h1>
+              <h1>
+                Connexion à Jellyfin...
+              </h1>
+
               <p>
                 Votre abonnement est actif.
               </p>
@@ -453,15 +528,17 @@ export function startWeb() {
                   const user =
                     ${safeUserData};
 
-                  /*
+                  /**
                    * Identifiants Jellyfin Web.
                    */
                   localStorage.setItem(
                     "jellyfin_credentials",
-                    JSON.stringify(credentials)
+                    JSON.stringify(
+                      credentials
+                    )
                   );
 
-                  /*
+                  /**
                    * Informations utilisateur.
                    */
                   const userKey =
@@ -472,27 +549,27 @@ export function startWeb() {
 
                   localStorage.setItem(
                     userKey,
-                    JSON.stringify(user)
+                    JSON.stringify(
+                      user
+                    )
                   );
 
-                  /*
-                   * Active l'auto-login Jellyfin.
+                  /**
+                   * Active l'auto-login.
                    */
                   localStorage.setItem(
                     "enableAutoLogin",
                     "true"
                   );
 
-                  /*
-                   * Nettoyage de l'URL :
-                   * le token ne reste pas dans l'historique.
+                  /**
+                   * Redirection vers Jellyfin.
                    */
                   window.location.replace(
                     ${JSON.stringify(
-                      `${config.publicBaseUrl}${config.jellyfinProxyPath}/web/`
+                      jellyfinWebUrl
                     )}
                   );
-
                 } catch (error) {
                   console.error(
                     "Jellyfin auto-login error:",
@@ -502,10 +579,12 @@ export function startWeb() {
                   document.body.innerHTML = \`
                     <div class="loading">
                       <h1>Erreur</h1>
+
                       <p>
                         Impossible de connecter automatiquement
                         votre compte Jellyfin.
                       </p>
+
                       <p>
                         Rechargez la page ou reconnectez-vous.
                       </p>
@@ -515,9 +594,9 @@ export function startWeb() {
               })();
             </script>
           </body>
+
           </html>
         `);
-
       } catch (error) {
         console.error(
           "Jellyfin auto-login error:",
@@ -533,7 +612,7 @@ export function startWeb() {
     }
   );
 
-  /*
+  /**
    * ============================================================
    * LOGOUT
    * ============================================================
@@ -560,7 +639,7 @@ export function startWeb() {
     }
   );
 
-  /*
+  /**
    * ============================================================
    * JELLYFIN REVERSE PROXY
    * ============================================================
@@ -615,7 +694,7 @@ export function startWeb() {
     }
   );
 
-  /*
+  /**
    * ============================================================
    * HTTP JELLYFIN PROXY
    * ============================================================
@@ -638,6 +717,7 @@ export function startWeb() {
 
       if (!isJellyfinRequest) {
         next();
+
         return;
       }
 
@@ -646,14 +726,29 @@ export function startWeb() {
         res,
         async () => {
           try {
-            /*
-             * Récupération de la session Discord.
+            /**
+             * ID Discord provenant de la session.
              */
             const discordUserId =
               res.locals.discordUserId;
 
-            /*
-             * On authentifie le compte Jellyfin
+            if (
+              typeof discordUserId !==
+              "string"
+            ) {
+              if (!res.headersSent) {
+                res
+                  .status(401)
+                  .send(
+                    "Discord session missing"
+                  );
+              }
+
+              return;
+            }
+
+            /**
+             * Authentification du compte Jellyfin
              * côté serveur.
              */
             const jellyfin =
@@ -661,12 +756,12 @@ export function startWeb() {
                 discordUserId
               );
 
-            /*
+            /**
              * Le navigateur peut envoyer son propre
-             * Authorization / X-Emby-Token.
+             * Authorization ou d'anciens tokens Jellyfin.
              *
-             * On les supprime pour empêcher qu'un token
-             * appartenant à un autre compte soit utilisé.
+             * On les supprime afin qu'un utilisateur
+             * ne puisse pas utiliser le token d'un autre compte.
              */
             delete req.headers.authorization;
 
@@ -678,6 +773,18 @@ export function startWeb() {
               "x-mediabrowser-token"
             ];
 
+            /**
+             * Nouveau header Jellyfin moderne.
+             */
+            const authorization =
+              jellyfinAuthorization(
+                discordUserId,
+                jellyfin.accessToken
+              );
+
+            /**
+             * Proxy HTTP vers Jellyfin.
+             */
             jellyfinProxy.web(
               req,
               res,
@@ -686,12 +793,11 @@ export function startWeb() {
                   config.jellyfinProxyTarget,
 
                 headers: {
-                  "X-Emby-Token":
-                    jellyfin.accessToken
+                  Authorization:
+                    authorization
                 }
               }
             );
-
           } catch (error) {
             console.error(
               "Jellyfin authentication error:",
@@ -711,7 +817,7 @@ export function startWeb() {
     }
   );
 
-  /*
+  /**
    * ============================================================
    * 404
    * ============================================================
@@ -727,7 +833,7 @@ export function startWeb() {
     }
   );
 
-  /*
+  /**
    * ============================================================
    * HTTP SERVER
    * ============================================================
@@ -748,7 +854,7 @@ export function startWeb() {
       }
     );
 
-  /*
+  /**
    * ============================================================
    * JELLYFIN WEBSOCKETS
    * ============================================================
@@ -786,11 +892,13 @@ export function startWeb() {
           );
 
         if (!isJellyfinRequest) {
+          socket.destroy();
+
           return;
         }
 
-        /*
-         * Vérification Discord + Stripe.
+        /**
+         * Vérification Discord + abonnement.
          */
         const access =
           await checkJellyfinAccess(
@@ -821,7 +929,7 @@ export function startWeb() {
           return;
         }
 
-        /*
+        /**
          * Authentification Jellyfin côté serveur.
          */
         const jellyfin =
@@ -829,7 +937,7 @@ export function startWeb() {
             access.discordUserId
           );
 
-        /*
+        /**
          * Empêche le client d'envoyer son propre token.
          */
         delete req.headers.authorization;
@@ -842,7 +950,16 @@ export function startWeb() {
           "x-mediabrowser-token"
         ];
 
-        /*
+        /**
+         * Header moderne Jellyfin.
+         */
+        const authorization =
+          jellyfinAuthorization(
+            access.discordUserId,
+            jellyfin.accessToken
+          );
+
+        /**
          * Proxy WebSocket avec le token
          * du compte Jellyfin correspondant.
          */
@@ -855,12 +972,11 @@ export function startWeb() {
               config.jellyfinProxyTarget,
 
             headers: {
-              "X-Emby-Token":
-                jellyfin.accessToken
+              Authorization:
+                authorization
             }
           }
         );
-
       } catch (error) {
         console.error(
           "Jellyfin WebSocket auth error:",
