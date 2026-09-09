@@ -39,6 +39,9 @@ services:
       - wireguard
       - postgres
 
+    volumes:
+      - ./subscribe-banner.png:/app/subscribe-banner.png
+
     network_mode: "service:wireguard"
 
     environment:
