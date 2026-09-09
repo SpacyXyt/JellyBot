@@ -711,16 +711,33 @@ async function handleMessageCreate(
 async function handleSubscriptionCommand(
   interaction: ChatInputCommandInteraction
 ) {
-  const url =
-    await createCheckout(
+  try {
+    await interaction.deferReply({
+      flags: 64
+    });
+
+    const url = await createCheckout(
       interaction.user.id
     );
 
-  await interaction.reply({
-    content:
-      `Voici votre lien d'abonnement :\n${url}`,
-    ephemeral: true
-  });
+    await interaction.editReply({
+      content:
+        `Voici votre lien d'abonnement :\n${url}`
+    });
+
+  } catch (error) {
+    console.error(
+      "Stripe checkout error:",
+      error
+    );
+
+    if (interaction.deferred) {
+      await interaction.editReply({
+        content:
+          "Impossible de créer le lien d'abonnement. Réessayez dans quelques instants."
+      });
+    }
+  }
 }
 
 /*
@@ -857,35 +874,40 @@ async function handleAccountCommand(
 async function handleButtonInteraction(
   interaction: ButtonInteraction
 ) {
-  if (
-    interaction.customId !==
-    "subscribe"
-  ) {
+  if (interaction.customId !== "subscribe") {
     return;
   }
 
   try {
-    const url =
-      await createCheckout(
-        interaction.user.id
-      );
-
-    await interaction.reply({
-      content:
-        `Voici votre lien de paiement Stripe :\n${url}`,
-      ephemeral: true
+    // Réponse immédiate à Discord
+    await interaction.deferReply({
+      flags: 64
     });
+
+    // Création du checkout après avoir acquitté l'interaction
+    const url = await createCheckout(
+      interaction.user.id
+    );
+
+    await interaction.editReply({
+      content:
+        `Voici votre lien de paiement Stripe :\n${url}`
+    });
+
   } catch (error) {
     console.error(
       "Stripe checkout error:",
       error
     );
 
-    await interaction.reply({
-      content:
-        "Impossible de créer le lien d'abonnement. Réessayez dans quelques instants.",
-      ephemeral: true
-    });
+    // L'interaction a déjà été deferReply()
+    // donc on utilise editReply(), pas reply()
+    if (interaction.deferred) {
+      await interaction.editReply({
+        content:
+          "Impossible de créer le lien d'abonnement. Réessayez dans quelques instants."
+      });
+    }
   }
 }
 
