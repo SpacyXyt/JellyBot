@@ -285,20 +285,14 @@ export function startWeb() {
         return;
       }
 
-      await requireJellyfinAccess(
-        req,
-        res,
-        () => {
-          jellyfinProxy.web(
-            req,
-            res,
-            {
-              target:
-                config.jellyfinProxyTarget
-            }
-          );
-        }
-      );
+      console.log(`[Proxy] Target: ${config.jellyfinProxyTarget}`);
+      console.log(`[Proxy] Path: ${req.path}`);
+
+      await requireJellyfinAccess(req, res, () => {
+        jellyfinProxy.web(req, res, {
+          target: config.jellyfinProxyTarget
+        });
+      });
     }
   );
 
